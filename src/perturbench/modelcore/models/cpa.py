@@ -101,12 +101,9 @@ class CPA(PerturbationModel):
         Args:
             n_genes: Number of genes.
             n_perts: Number of perturbations.
-            drug_embeddings: Drug embeddings.
             n_latent: Number of latent variables.
-            decoder_distribution: Distribution of the decoder.
             hidden_dim: Hidden dimension.
             n_layers_encoder: Number of encoder layers.
-            n_layers_decoder: Number of decoder layers.
             n_layers_pert_emb: Number of perturbation embedding layers.
             n_layers_covar_emb: Number of covariate embedding layers.
             adv_classifier_hidden_dim: Adversarial classifier hidden dimension.

@@ -25,7 +25,6 @@ model:
   adv_classifier_n_layers: 2
   adv_steps: 3
   adv_weight: 0.21007098128462928
-  decoder_distribution: IsotropicGaussian
   dropout: 0.1
   elementwise_affine: false
   hidden_dim: 1280

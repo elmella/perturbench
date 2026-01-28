@@ -27,7 +27,6 @@ model:
   n_latent: 128 
   hidden_dim: 256
   n_layers_encoder: 4
-  n_layers_decoder: 4 
   n_layers_pert_emb: 4
   variational: True
   adv_classifier_n_layers: 3

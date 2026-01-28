@@ -5,7 +5,7 @@
 
 defaults:
   - override /model: decoder_only
-  - override /data: sciplex3
+  - override /data: op3
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters

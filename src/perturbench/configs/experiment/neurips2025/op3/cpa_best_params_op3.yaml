@@ -5,7 +5,7 @@
 
 defaults:
   - override /model: cpa
-  - override /data: sciplex3
+  - override /data: op3
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
@@ -24,7 +24,6 @@ model:
   adv_classifier_n_layers: 3
   adv_steps: 2
   adv_weight: 3.7405096830471862
-  decoder_distribution: IsotropicGaussian
   dropout: 0.1
   elementwise_affine: false
   hidden_dim: 5376
