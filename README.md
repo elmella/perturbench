@@ -30,6 +30,8 @@ for command line extras such as the `rich` package, which gives you neater progr
 ### Dataset Access
 For convenience, we've uploaded all processed datasets as gzipped h5ad files to Hugging Face at: https://huggingface.co/datasets/altoslabs/perturbench/tree/main. If you have installed PerturBench with pip you can also run `download --data-cache-dir=[your_local_data_directory]` to pull all processed datasets.
 
+Alternatively, you can access the datasets using [lamindb](https://github.com/laminlabs/lamindb) at https://lamin.ai/altoslabs/perturbench.
+
 We also provide accessor functions to automatically download and cache all datasets as either [AnnData objects](https://anndata.readthedocs.io/en/latest/) or a [PyTorch Datasets](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html).
 ```
 from perturbench.data.accessors.srivatsan20 import Sciplex3
