@@ -1,16 +1,14 @@
 # PerturBench
 We present a comprehensive framework, PerturBench for predicting the effects of perturbations in single cells, designed to standardize benchmarking in this rapidly evolving field. We include a user-friendly platform, diverse datasets, metrics for fair model comparison, and detailed performance analysis.
 
-If you use PerturBench in your work, please consider citing [Wu, Wershof, Shmon, Nassar, Osinski, Eksi, and Yan et al, 2025](https://arxiv.org/abs/2408.10609):
+If you use PerturBench in your work, please consider citing [Wu, Wershof, Shmon, Nassar, Osinski, Eksi, and Yan et al, 2025](https://openreview.net/forum?id=PPPDuyiZaG):
 ```
-@misc{wu2024perturbenchbenchmarkingmachinelearning,
+@inproceedings{wu2025perturbench,
       title={PerturBench: Benchmarking Machine Learning Models for Cellular Perturbation Analysis}, 
-      author={Yan Wu and Esther Wershof and Sebastian M Schmon and Marcel Nassar and Błażej Osiński and Ridvan Eksi Zichao Yan and Rory Stark and Kun Zhang and Thore Graepel},
-      year={2024},
-      eprint={2408.10609},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2408.10609}, 
+      author={Yan Wu and Esther Wershof and Sebastian M Schmon and Marcel Nassar and Błażej Osiński and Ridvan Eksi and Zichao Yan and Rory Stark and Kun Zhang and Thore Graepel},
+      booktitle={The Thirty-ninth Conference on Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+      year={2025},
+      url={https://openreview.net/forum?id=PPPDuyiZaG},
 }
 ```
 
