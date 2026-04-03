@@ -64,7 +64,7 @@ def get_ensembl_mappings():
         raise ImportError("Please install the pybiomart package to use this function")
 
     # Set up connection to server
-    dataset = Dataset(name="hsapiens_gene_ensembl", host="http://www.ensembl.org")
+    dataset = Dataset(name="hsapiens_gene_ensembl", host="http://useast.ensembl.org")
 
     id_gene_df = dataset.query(attributes=["ensembl_gene_id", "hgnc_symbol"])
 

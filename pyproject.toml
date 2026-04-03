@@ -38,6 +38,8 @@ dependencies = [
     'ray',
     'python-dotenv',
     'geomloss',
+    "pybiomart>=0.2.0",
+    "mygene>=3.2.2",
 ]
 dynamic = ["version"]
 

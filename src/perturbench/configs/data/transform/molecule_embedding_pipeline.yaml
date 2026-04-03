@@ -1,0 +1,7 @@
+conf:
+  _target_: perturbench.data.transforms.pipelines.MoleculeEmbeddingPipeline
+  _partial_: true
+dependencies:
+  perturbation_embedding_dict: perturbation_embedding_dict
+  covariate_uniques: covariate_uniques
+  perturbation_control_value: perturbation_control_value

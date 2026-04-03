@@ -1,8 +1,11 @@
+import logging
 import warnings
 from pathlib import Path
 from collections.abc import Callable, Mapping
 import gc
 
+import numpy as np
+import pandas as pd
 from omegaconf import DictConfig
 import lightning as L
 import scanpy as sc
@@ -19,6 +22,8 @@ from .datasets import (
 from .utils import batch_dataloader
 from .collate import noop_collate
 import perturbench.data.datasplitter as datasplitter
+
+log = logging.getLogger(__name__)
 
 
 class AnnDataLitModule(L.LightningDataModule):
@@ -43,6 +48,11 @@ class AnnDataLitModule(L.LightningDataModule):
         evaluation: DictConfig | None = None,
         use_counts: bool = False,
         embedding_key: str | None = None,
+        perturbation_embedding_path: str | None = None,
+        perturbation_embedding_column: str | None = None,
+        perturbation_embedding_name_column: str = "original_pert_name",
+        perturbation_embedding_dataset: str | None = None,
+        perturbation_embedding_name_remap: dict[str, str] | None = None,
         seed: int = 0,
     ) -> None:
         super().__init__()
@@ -127,6 +137,30 @@ class AnnDataLitModule(L.LightningDataModule):
         self.train_context = train_context
         self.evaluation = evaluation
 
+        # Load molecule embeddings if specified
+        self._perturbation_embedding_dict = None
+        self._perturbation_feature_dim = None
+        if perturbation_embedding_path is not None:
+            self._perturbation_embedding_dict = self._load_perturbation_embeddings(
+                path=perturbation_embedding_path,
+                column=perturbation_embedding_column,
+                name_column=perturbation_embedding_name_column,
+                dataset_filter=perturbation_embedding_dataset,
+                perturbation_control_value=perturbation_control_value,
+                name_remap=perturbation_embedding_name_remap,
+            )
+            first_emb = next(iter(self._perturbation_embedding_dict.values()))
+            self._perturbation_feature_dim = first_emb.shape[0]
+            train_context["perturbation_embedding_dict"] = self._perturbation_embedding_dict
+            train_context["perturbation_control_value"] = perturbation_control_value
+            log.info(
+                "Loaded %d perturbation embeddings (dim=%d) from %s [%s]",
+                len(self._perturbation_embedding_dict),
+                self._perturbation_feature_dim,
+                perturbation_embedding_path,
+                perturbation_embedding_column,
+            )
+
         # Verify that train, val, test datasets have the same perturbations and covariates
         self._verify_splits(train_context, val_context, test_context)
 
@@ -145,7 +179,10 @@ class AnnDataLitModule(L.LightningDataModule):
         else:
             self.example_collate_fn = collate
 
-        self.num_perturbations = len(train_context["perturbation_uniques"])
+        if self._perturbation_feature_dim is not None:
+            self.num_perturbations = self._perturbation_feature_dim
+        else:
+            self.num_perturbations = len(train_context["perturbation_uniques"])
 
         # Cleanup
         del adata, train_adata
@@ -167,6 +204,72 @@ class AnnDataLitModule(L.LightningDataModule):
             return None
         else:
             return self.train_dataset.embeddings.shape[1]
+
+    @staticmethod
+    def _load_perturbation_embeddings(
+        path: str,
+        column: str,
+        name_column: str,
+        dataset_filter: str | None,
+        perturbation_control_value: str,
+        name_remap: dict[str, str] | None = None,
+    ) -> dict[str, np.ndarray]:
+        """Load pre-computed perturbation embeddings from a pickle file.
+
+        Args:
+            path: Path to the pickle file containing a DataFrame with
+                perturbation embeddings.
+            column: Column name containing the embedding vectors
+                (e.g. 'LPM_emb' or 'ECFP:2').
+            name_column: Column containing the perturbation name to use as
+                the lookup key (should match names in the dataset's
+                perturbation_key column).
+            dataset_filter: If set, filter the DataFrame to rows matching
+                this value in the 'dataset' column.
+            perturbation_control_value: The control label in the dataset
+                (used to remap DMSO/vehicle entries).
+            name_remap: Optional mapping from embedding names to dataset
+                names (e.g. {'(+)-JQ1': 'JQ1'} when the dataset remapped
+                names during curation).
+
+        Returns:
+            A dict mapping perturbation name to embedding vector.
+        """
+        df = pd.read_pickle(path)
+        if dataset_filter is not None and "dataset" in df.columns:
+            df = df[df["dataset"] == dataset_filter]
+
+        if name_remap is None:
+            name_remap = {}
+
+        embedding_dict: dict[str, np.ndarray] = {}
+        for _, row in df.iterrows():
+            emb = row[column]
+            if emb is None or (isinstance(emb, float) and np.isnan(emb)):
+                continue
+            original_name = str(row[name_column]).strip()
+            # Map control synonyms
+            if original_name == perturbation_control_value or original_name in (
+                "DMSO", "dmso", "vehicle",
+            ):
+                continue
+            emb_array = np.asarray(emb, dtype=np.float32)
+            # Apply name remapping to match dataset names
+            mapped_name = name_remap.get(original_name, original_name)
+            # Store under both original and remapped names so lookups
+            # work regardless of which variant appears in the dataset
+            for name in {original_name, mapped_name}:
+                if name in embedding_dict:
+                    embedding_dict[name] = (embedding_dict[name] + emb_array) / 2.0
+                else:
+                    embedding_dict[name] = emb_array
+
+        if not embedding_dict:
+            raise ValueError(
+                f"No valid embeddings found in {path} "
+                f"(column={column}, dataset={dataset_filter})"
+            )
+        return embedding_dict
 
     @staticmethod
     def _verify_splits(train_info: dict, val_info: dict | None, test_info: dict | None):
