@@ -4,7 +4,7 @@ defaults:
   - evaluation: default
 
 _target_: perturbench.data.modules.AnnDataLitModule
-datapath: ${paths.data_dir}/sciplex3_processed.h5ad
+datapath: ${paths.data_dir}/srivatsan20_processed.h5ad
 perturbation_key: condition
 perturbation_combination_delimiter: +
 perturbation_control_value: control

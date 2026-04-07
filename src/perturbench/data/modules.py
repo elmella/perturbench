@@ -53,6 +53,7 @@ class AnnDataLitModule(L.LightningDataModule):
         perturbation_embedding_name_column: str = "original_pert_name",
         perturbation_embedding_dataset: str | None = None,
         perturbation_embedding_name_remap: dict[str, str] | None = None,
+        perturbation_subset_path: str | None = None,
         seed: int = 0,
     ) -> None:
         super().__init__()
@@ -88,6 +89,63 @@ class AnnDataLitModule(L.LightningDataModule):
         adata.raw = None
         if "counts" in adata.layers:
             del adata.layers["counts"]
+
+        # Load molecule embeddings if specified, and filter to shared perturbations
+        self._perturbation_embedding_dict = None
+        self._perturbation_feature_dim = None
+        if perturbation_embedding_path is not None:
+            self._perturbation_embedding_dict = self._load_perturbation_embeddings(
+                path=perturbation_embedding_path,
+                column=perturbation_embedding_column,
+                name_column=perturbation_embedding_name_column,
+                dataset_filter=perturbation_embedding_dataset,
+                perturbation_control_value=perturbation_control_value,
+                name_remap=perturbation_embedding_name_remap,
+            )
+            first_emb = next(iter(self._perturbation_embedding_dict.values()))
+            self._perturbation_feature_dim = first_emb.shape[0]
+
+            # Filter adata to perturbations present in the embedding dict
+            embedding_names = set(self._perturbation_embedding_dict.keys())
+            pert_col = adata.obs[perturbation_key]
+            keep_mask = pert_col.isin(embedding_names) | (
+                pert_col == perturbation_control_value
+            )
+            n_before = adata.n_obs
+            adata = adata[keep_mask].copy()
+            n_dropped = n_before - adata.n_obs
+            if n_dropped > 0:
+                log.info(
+                    "Filtered %d cells with perturbations missing from embeddings "
+                    "(%d → %d cells)",
+                    n_dropped, n_before, adata.n_obs,
+                )
+
+            log.info(
+                "Loaded %d perturbation embeddings (dim=%d) from %s [%s]",
+                len(self._perturbation_embedding_dict),
+                self._perturbation_feature_dim,
+                perturbation_embedding_path,
+                perturbation_embedding_column,
+            )
+
+        # Filter to a pre-defined subset of perturbations (for fair comparisons)
+        if perturbation_subset_path is not None:
+            subset = set(
+                line.strip()
+                for line in Path(perturbation_subset_path).read_text().splitlines()
+                if line.strip()
+            )
+            pert_col = adata.obs[perturbation_key]
+            keep_mask = pert_col.isin(subset) | (
+                pert_col == perturbation_control_value
+            )
+            n_before = adata.n_obs
+            adata = adata[keep_mask].copy()
+            log.info(
+                "Restricted to %d perturbation subset from %s (%d → %d cells)",
+                len(subset), perturbation_subset_path, n_before, adata.n_obs,
+            )
 
         # Split intro train, val, test datasets
         if splitter is not None:
@@ -137,29 +195,9 @@ class AnnDataLitModule(L.LightningDataModule):
         self.train_context = train_context
         self.evaluation = evaluation
 
-        # Load molecule embeddings if specified
-        self._perturbation_embedding_dict = None
-        self._perturbation_feature_dim = None
-        if perturbation_embedding_path is not None:
-            self._perturbation_embedding_dict = self._load_perturbation_embeddings(
-                path=perturbation_embedding_path,
-                column=perturbation_embedding_column,
-                name_column=perturbation_embedding_name_column,
-                dataset_filter=perturbation_embedding_dataset,
-                perturbation_control_value=perturbation_control_value,
-                name_remap=perturbation_embedding_name_remap,
-            )
-            first_emb = next(iter(self._perturbation_embedding_dict.values()))
-            self._perturbation_feature_dim = first_emb.shape[0]
+        if self._perturbation_embedding_dict is not None:
             train_context["perturbation_embedding_dict"] = self._perturbation_embedding_dict
             train_context["perturbation_control_value"] = perturbation_control_value
-            log.info(
-                "Loaded %d perturbation embeddings (dim=%d) from %s [%s]",
-                len(self._perturbation_embedding_dict),
-                self._perturbation_feature_dim,
-                perturbation_embedding_path,
-                perturbation_embedding_column,
-            )
 
         # Verify that train, val, test datasets have the same perturbations and covariates
         self._verify_splits(train_context, val_context, test_context)

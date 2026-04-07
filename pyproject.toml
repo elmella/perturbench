@@ -40,6 +40,7 @@ dependencies = [
     'geomloss',
     "pybiomart>=0.2.0",
     "mygene>=3.2.2",
+    "hydra-joblib-launcher>=1.2.0",
 ]
 dynamic = ["version"]
 

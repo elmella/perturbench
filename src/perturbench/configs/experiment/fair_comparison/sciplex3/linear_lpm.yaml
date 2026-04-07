@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - override /model: linear_additive
+  - override /data: sciplex3_lpm
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  lr: 0.0007787610860511324
+  wd: 1.0632418512521614e-08
+
+data:
+  perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/common_perturbations.txt

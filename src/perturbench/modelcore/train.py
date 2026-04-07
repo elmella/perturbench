@@ -64,8 +64,12 @@ def train(runtime_context: dict):
         ]
 
     test_metrics = trainer.callback_metrics
-    # merge train and test metrics
-    metric_dict = {**train_metrics, **test_metrics, **summary_metrics_dict}
+    # merge train and test metrics, converting tensors to plain floats
+    # so the dict is picklable (required by joblib multirun launcher)
+    metric_dict = {}
+    for d in (train_metrics, test_metrics, summary_metrics_dict):
+        for k, v in d.items():
+            metric_dict[k] = v.item() if hasattr(v, "item") else v
 
     return metric_dict
 
