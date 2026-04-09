@@ -188,3 +188,5 @@ tensorboard/
 !*.py
 
 results/
+
+scgpt_files/
