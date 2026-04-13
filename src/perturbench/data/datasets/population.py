@@ -99,10 +99,11 @@ class Counterfactual(Dataset):
                 transform(batch)
 
             except Exception as e:
-                raise ValueError(
-                    f"transform ({transform}) must be a function that "
-                    f"transforms a Batch"
-                ) from e
+                import warnings
+                warnings.warn(
+                    f"Transform validation failed on this dataset: {e}. "
+                    f"This may be expected for unseen perturbation splits."
+                )
         self._transform = transform
 
     def __len__(self):

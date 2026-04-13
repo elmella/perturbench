@@ -202,9 +202,33 @@ class AnnDataLitModule(L.LightningDataModule):
         # Verify that train, val, test datasets have the same perturbations and covariates
         self._verify_splits(train_context, val_context, test_context)
 
-        # Build an example/batch transform pipeline from train dataset context
+        # Build transform context. Keep default behavior unchanged, and only
+        # expand one-hot perturbation classes when val/test contain perturbations
+        # not present in train (unseen perturbation task).
+        transform_context = train_context
+        train_perturbation_uniques = list(train_context["perturbation_uniques"])
+        merged_perturbation_uniques = list(train_perturbation_uniques)
+        seen_perturbations = set(train_perturbation_uniques)
+        for split_context in (val_context, test_context):
+            if split_context is None:
+                continue
+            for perturbation in split_context["perturbation_uniques"]:
+                if perturbation not in seen_perturbations:
+                    seen_perturbations.add(perturbation)
+                    merged_perturbation_uniques.append(perturbation)
+        if len(merged_perturbation_uniques) != len(train_perturbation_uniques):
+            log.info(
+                "Unseen perturbation split detected. Expanding perturbation "
+                "encoder classes from %d (train) to %d (train+val+test).",
+                len(train_perturbation_uniques),
+                len(merged_perturbation_uniques),
+            )
+            transform_context = dict(train_context)
+            transform_context["perturbation_uniques"] = merged_perturbation_uniques
+
+        # Build an example/batch transform pipeline from transform context
         if transform is not None:
-            transform_pipeline = instantiate_with_context(transform, train_context)
+            transform_pipeline = instantiate_with_context(transform, transform_context)
 
             # Set transform pipeline for each dataset
             self.train_dataset.transform = transform_pipeline
@@ -220,7 +244,7 @@ class AnnDataLitModule(L.LightningDataModule):
         if self._perturbation_feature_dim is not None:
             self.num_perturbations = self._perturbation_feature_dim
         else:
-            self.num_perturbations = len(train_context["perturbation_uniques"])
+            self.num_perturbations = len(transform_context["perturbation_uniques"])
 
         # Cleanup
         del adata, train_adata
@@ -316,8 +340,12 @@ class AnnDataLitModule(L.LightningDataModule):
                 if not set(train_info["perturbation_uniques"]) >= set(
                     info["perturbation_uniques"]
                 ):
-                    raise RuntimeError(
-                        f"Train dataset must contain all perturbations in {split} dataset."
+                    unseen = set(info["perturbation_uniques"]) - set(
+                        train_info["perturbation_uniques"]
+                    )
+                    warnings.warn(
+                        f"{split} dataset contains {len(unseen)} perturbations "
+                        f"not in train (unseen perturbation task)."
                     )
                 if set(train_info["perturbation_uniques"]) != set(
                     info["perturbation_uniques"]

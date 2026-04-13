@@ -87,9 +87,15 @@ class PerturbationDataSplitter:
                     train_control_fraction=splitter_config.train_control_fraction,
                     downsample_fraction=splitter_config.downsample_fraction,
                 )
+            elif splitter_config.task == "unseen":
+                split = perturbation_datasplitter.split_unseen_perturbations(
+                    seed=splitter_config.splitter_seed,
+                    unseen_fraction=splitter_config.unseen_fraction,
+                    train_control_fraction=splitter_config.train_control_fraction,
+                )
             else:
                 raise ValueError(
-                    'splitter_config.task must be "transfer", "combine", or "combine_inverse"'
+                    'splitter_config.task must be "transfer", "combine", "combine_inverse", or "unseen"'
                 )
 
         assert len(split) == obs_dataframe.shape[0]
@@ -466,6 +472,79 @@ class PerturbationDataSplitter:
         split = self.obs_dataframe[split_key]
 
         return split
+
+    def split_unseen_perturbations(
+        self,
+        print_split: bool = True,
+        seed: int = 42,
+        unseen_fraction: float = 0.3,
+        train_control_fraction: float = 0.5,
+        test_fraction: float = 0.5,
+    ):
+        """Holds out perturbations completely from all covariates to test
+           whether models can predict effects of never-seen perturbations.
+
+        Unlike `split_covariates` where held-out perturbations are still seen
+        in other covariates, here the held-out perturbations are never seen
+        during training in any context. This tests whether perturbation
+        embeddings (e.g. ECFP, LPM) enable generalization to novel compounds.
+
+        Args
+            print_split: Whether to print the split summary
+            seed: Random seed for reproducibility
+            unseen_fraction: Fraction of perturbations to completely hold out
+            train_control_fraction: Fraction of control cells for training
+            test_fraction: Fraction of held out perturbations for test vs val
+
+        Returns
+            split: Split of the data into train/val/test as a pd.Series
+        """
+        split_key = "unseen_split_seed" + str(seed)
+        self.split_params[split_key] = {
+            "unseen_fraction": unseen_fraction,
+            "train_control_fraction": train_control_fraction,
+        }
+
+        # Get all unique non-control perturbations
+        all_perts = [
+            p
+            for p in self.obs_dataframe[self.perturbation_key].unique()
+            if p != self.perturbation_control_value
+        ]
+
+        # Randomly select which perturbations are completely unseen
+        num_unseen = int(len(all_perts) * unseen_fraction)
+        random.seed(seed)
+        unseen_perts = set(random.sample(all_perts, num_unseen))
+
+        # Split unseen perturbations into val/test at the perturbation level
+        unseen_list = sorted(unseen_perts)
+        random.seed(seed + 1)
+        random.shuffle(unseen_list)
+        split_idx = int(len(unseen_list) * (1 - test_fraction))
+        val_perts = set(unseen_list[:split_idx])
+        test_perts = set(unseen_list[split_idx:])
+        train_perts = set(all_perts) - unseen_perts
+
+        # Assign split labels to all cells
+        self.obs_dataframe[split_key] = [None] * self.obs_dataframe.shape[0]
+        pert_col = self.obs_dataframe[self.perturbation_key]
+        self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+        self.obs_dataframe.loc[pert_col.isin(val_perts), split_key] = "val"
+        self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
+
+        # Split control cells
+        self._split_controls(seed, split_key, train_control_fraction)
+
+        # Print split
+        split_summary_df = self._summarize_split(split_key)
+        self.summary_dataframes[split_key] = split_summary_df
+        if print_split:
+            print(f"Unseen split: {num_unseen}/{len(all_perts)} perturbations held out")
+            print("Split summary: ")
+            print(split_summary_df)
+
+        return self.obs_dataframe[split_key]
 
     def split_covariates_manual(
         self,

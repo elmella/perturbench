@@ -1,0 +1,7 @@
+task: unseen
+covariate_keys: [cell_type]
+unseen_fraction: 0.3
+train_control_fraction: 0.5
+splitter_seed: 42
+save: True
+output_path: "${paths.output_dir}/"
