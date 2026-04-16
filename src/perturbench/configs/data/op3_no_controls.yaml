@@ -23,4 +23,5 @@ loader:
   num_workers: 8
 
 splitter:
-  split_path: ${paths.data_dir}/op3_split.csv
+  split_path: ${paths.data_dir}/op3_split.csvevaluation:
+  chunk_size: 50

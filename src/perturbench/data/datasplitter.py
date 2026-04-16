@@ -56,6 +56,9 @@ class PerturbationDataSplitter:
             split = pd.read_csv(
                 splitter_config.split_path, index_col=0, header=None
             ).iloc[:, 0]
+            # Filter saved split to match the (possibly filtered) obs_dataframe
+            if len(split) != obs_dataframe.shape[0]:
+                split = split.reindex(obs_dataframe.index)
         else:
             perturbation_datasplitter = PerturbationDataSplitter(
                 obs_dataframe=obs_dataframe,

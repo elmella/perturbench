@@ -1,6 +1,6 @@
 defaults:
   - transform: linear_model_pipeline
-  - splitter: op3_saved_split
+  - splitter: unseen_perturbation_task
   - evaluation: default
 
 _target_: perturbench.data.modules.AnnDataLitModule

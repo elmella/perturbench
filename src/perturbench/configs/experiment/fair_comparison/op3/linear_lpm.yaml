@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+  - override /model: linear_additive
+  - override /data: op3_lpm
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  inject_covariates: true
+  lr: 0.004995987206501003
+  wd: 1.0007706387095853e-08
+
+data:
+  perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/op3_common_perturbations.txt

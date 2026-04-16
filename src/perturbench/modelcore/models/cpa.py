@@ -559,7 +559,7 @@ class CPA(PerturbationModel):
             + self.penalty_weight * losses["penalty_adv"]
         )
 
-        if self.start_adv_training:
+        if self.start_adv_training and self.use_adversary:
             if batch_idx % self.adv_steps == 0:
                 self.toggle_optimizer(optimizer_generative)
                 optimizer_generative.zero_grad()

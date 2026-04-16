@@ -1,0 +1,25 @@
+# @package _global_
+
+defaults:
+  - override /model: latent_additive
+  - override /data: op3_lpm
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  dropout: 0.2
+  encoder_width: 2304
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 128
+  lr: 0.00015941357987722077
+  n_layers: 1
+  softplus_output: true
+  wd: 3.511572655989134e-09
+
+data:
+  perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/op3_common_perturbations.txt

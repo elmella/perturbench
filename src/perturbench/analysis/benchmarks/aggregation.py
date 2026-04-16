@@ -273,15 +273,22 @@ def aggregate_adata(
                     )
                 
                 elif aggr_method in ['scores', 'pvals', 'logp']:
-                    deg_df = _differential_expression_helper(
-                        adata[covs == cov,:],
-                        pert_col=pert_col,
-                        ctrl=ctrl,
-                        de_method=de_method,
-                        deg_key=pert_col + delim + de_method,
-                        use_control_variance=use_control_variance,
-                        **kwargs,
-                    )
+                    try:
+                        deg_df = _differential_expression_helper(
+                            adata[covs == cov,:],
+                            pert_col=pert_col,
+                            ctrl=ctrl,
+                            de_method=de_method,
+                            deg_key=pert_col + delim + de_method,
+                            use_control_variance=use_control_variance,
+                            **kwargs,
+                        )
+                    except ValueError as e:
+                        import warnings
+                        warnings.warn(
+                            f"Skipping DEG for covariate {cov}: {e}"
+                        )
+                        continue
                     inf_rows = (deg_df.scores == np.inf) | (deg_df.scores == -np.inf)
                     deg_df.loc[inf_rows, 'scores'] = 0.0
                     deg_df.loc[inf_rows, 'pvals'] = 1.0

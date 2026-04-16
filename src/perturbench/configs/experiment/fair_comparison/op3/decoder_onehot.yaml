@@ -1,0 +1,23 @@
+# @package _global_
+
+defaults:
+  - override /model: decoder_only
+  - override /data: op3
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  encoder_width: 4352
+  lr: 0.00018605849939523224
+  n_layers: 1
+  softplus_output: false
+  use_covariates: true
+  use_perturbations: true
+  wd: 1.1403528578455292e-06
+
+data:
+  perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/op3_common_perturbations.txt

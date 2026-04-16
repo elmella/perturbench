@@ -249,7 +249,12 @@ class Evaluation:
                     ref_perts = list(aggr_ref[cov].keys())
                     perts = list(set(cov_aggr.keys()).intersection(ref_perts))
                     if len(perts) == 0:
-                        raise ValueError(f"No perturbations in common between {k} and ref for covariate {cov}")
+                        import warnings
+                        warnings.warn(
+                            f"Skipping covariate {cov}: no perturbations in common "
+                            f"between {k} and reference (likely controls-only split)."
+                        )
+                        continue
                     
                     if n_top_degs is not None:
                         deg_mask = {}

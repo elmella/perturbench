@@ -15,7 +15,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import logging
+
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 import numpy as np
@@ -23,6 +26,8 @@ import numpy as np
 from ..nn.mlp import MLP, MaskNet
 from .base import PerturbationModel
 from perturbench.data.types import Batch
+
+log = logging.getLogger(__name__)
 
 
 class LatentAdditive(PerturbationModel):
