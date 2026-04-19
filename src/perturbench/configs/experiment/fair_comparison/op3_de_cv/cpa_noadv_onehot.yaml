@@ -1,0 +1,35 @@
+# @package _global_
+
+defaults:
+  - override /model: cpa
+  - override /data: op3_de_cv
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+data:
+  add_controls: False
+
+model:
+  use_adversary: false
+  adv_classifier_hidden_dim: 206
+  adv_classifier_n_layers: 3
+  adv_steps: 2
+  adv_weight: 9.14684155898311
+  dropout: 0.2
+  elementwise_affine: false
+  hidden_dim: 5376
+  kl_weight: 1.018240228193501
+  lr: 5.173675072037089e-05
+  n_latent: 256
+  n_layers_covar_emb: 1
+  n_layers_encoder: 1
+  n_layers_pert_emb: 2
+  n_warmup_epochs: 5
+  penalty_weight: 2.5722510111902106
+  softplus_output: false
+  variational: true
+  wd: 4.555839421376766e-07

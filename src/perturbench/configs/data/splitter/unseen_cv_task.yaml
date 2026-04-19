@@ -1,0 +1,8 @@
+task: unseen_cv
+covariate_keys: [cell_type]
+n_folds: 4
+fold: 0  # override per run, 0..n_folds-1
+train_control_fraction: 0.5
+splitter_seed: 42
+save: True
+output_path: "${paths.output_dir}/"

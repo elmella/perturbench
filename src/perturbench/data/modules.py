@@ -226,6 +226,10 @@ class AnnDataLitModule(L.LightningDataModule):
             transform_context = dict(train_context)
             transform_context["perturbation_uniques"] = merged_perturbation_uniques
 
+        # Store the full perturbation list (including unseen) for models
+        # that need the name-to-index mapping (e.g., learnable embeddings)
+        self.all_perturbation_names = merged_perturbation_uniques
+
         # Build an example/batch transform pipeline from transform context
         if transform is not None:
             transform_pipeline = instantiate_with_context(transform, transform_context)

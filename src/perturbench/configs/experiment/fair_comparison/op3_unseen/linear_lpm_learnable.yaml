@@ -1,0 +1,23 @@
+# @package _global_
+
+defaults:
+  - override /model: linear_additive
+  - override /data: op3_unseen
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  learnable_embeddings: true
+  freeze_embeddings: false
+  perturbation_embedding_path: ${paths.work_dir}/fp_lmp_embeddings/tahoe_sci_op3_updated.pkl
+  perturbation_embedding_column: "LPM_emb"
+  perturbation_embedding_name_column: original_pert_name
+  perturbation_embedding_dataset: op3
+  inject_covariates: true
+  lr: 0.004995987206501003
+  wd: 1.0007706387095853e-08
+

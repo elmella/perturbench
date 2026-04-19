@@ -56,6 +56,12 @@ class LinearAdditive(PerturbationModel):
         lr_scheduler_patience: int | None = None,
         lr_scheduler_factor: int | None = None,
         softplus_output: bool = True,
+        learnable_embeddings: bool = False,
+        freeze_embeddings: bool = False,
+        perturbation_embedding_path: str | None = None,
+        perturbation_embedding_column: str | None = None,
+        perturbation_embedding_name_column: str = "original_pert_name",
+        perturbation_embedding_dataset: str | None = None,
         datamodule: L.LightningDataModule | None = None,
     ) -> None:
         """
@@ -93,6 +99,35 @@ class LinearAdditive(PerturbationModel):
         if n_perts is not None:
             self.n_perts = n_perts
 
+        # Learnable perturbation embeddings
+        self.pert_embedding = None
+        fc_input_dim = self.n_perts
+
+        if learnable_embeddings and perturbation_embedding_path is not None and datamodule is not None:
+            import pandas as pd
+            df = pd.read_pickle(perturbation_embedding_path)
+            if perturbation_embedding_dataset is not None and "dataset" in df.columns:
+                df = df[df["dataset"] == perturbation_embedding_dataset]
+            emb_dict = {}
+            for _, row in df.iterrows():
+                emb = row[perturbation_embedding_column]
+                if emb is not None and not (isinstance(emb, float) and np.isnan(emb)):
+                    emb_dict[str(row[perturbation_embedding_name_column]).strip()] = np.asarray(emb, dtype=np.float32)
+
+            all_pert_names = getattr(datamodule, "all_perturbation_names",
+                                     datamodule.train_context["perturbation_uniques"])
+            emb_dim = next(iter(emb_dict.values())).shape[0]
+            emb_matrix = torch.zeros(self.n_perts, emb_dim)
+            matched = 0
+            for i, name in enumerate(all_pert_names):
+                if name in emb_dict:
+                    emb_matrix[i] = torch.from_numpy(emb_dict[name])
+                    matched += 1
+            self.pert_embedding = nn.Embedding.from_pretrained(
+                emb_matrix, freeze=freeze_embeddings
+            )
+            fc_input_dim = emb_dim
+
         self.inject_covariates = inject_covariates
         if inject_covariates:
             if datamodule is None or datamodule.train_context is None:
@@ -107,9 +142,9 @@ class LinearAdditive(PerturbationModel):
                     ].values()
                 ]
             )
-            self.fc_pert = nn.Linear(self.n_perts + n_total_covariates, self.n_genes)
+            self.fc_pert = nn.Linear(fc_input_dim + n_total_covariates, self.n_genes)
         else:
-            self.fc_pert = nn.Linear(self.n_perts, self.n_genes)
+            self.fc_pert = nn.Linear(fc_input_dim, self.n_genes)
 
     def forward(
         self,
@@ -117,13 +152,19 @@ class LinearAdditive(PerturbationModel):
         perturbation: torch.Tensor,
         covariates: dict,
     ):
+        if self.pert_embedding is not None:
+            pert_indices = perturbation.argmax(dim=-1)
+            pert_input = self.pert_embedding(pert_indices)
+        else:
+            pert_input = perturbation
+
         if self.inject_covariates:
             merged_covariates = torch.cat(
                 [cov.squeeze() for cov in covariates.values()], dim=1
             )
-            perturbation = torch.cat([perturbation, merged_covariates], dim=1)
+            pert_input = torch.cat([pert_input, merged_covariates], dim=1)
 
-        predicted_perturbed_expression = control_expression + self.fc_pert(perturbation)
+        predicted_perturbed_expression = control_expression + self.fc_pert(pert_input)
         if self.softplus_output:
             predicted_perturbed_expression = F.softplus(predicted_perturbed_expression)
         return predicted_perturbed_expression

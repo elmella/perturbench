@@ -95,6 +95,12 @@ class CPA(PerturbationModel):
         use_covariates: bool = True,
         softplus_output: bool = False,
         elementwise_affine: bool = False,
+        learnable_embeddings: bool = False,
+        freeze_embeddings: bool = False,
+        perturbation_embedding_path: str | None = None,
+        perturbation_embedding_column: str | None = None,
+        perturbation_embedding_name_column: str = "original_pert_name",
+        perturbation_embedding_dataset: str | None = None,
         datamodule: L.LightningDataModule | None = None,
     ):
         """The constructor for the CPA module class.
@@ -188,8 +194,45 @@ class CPA(PerturbationModel):
             self.softplus_output,
         )
 
+        # Learnable perturbation embeddings (optional)
+        self.learnable_embeddings = learnable_embeddings
+        self.pert_embedding = None
+        pert_network_input_dim = self.n_perts
+
+        if learnable_embeddings and perturbation_embedding_path is not None and datamodule is not None:
+            import pandas as pd
+            import numpy as np
+            df = pd.read_pickle(perturbation_embedding_path)
+            if perturbation_embedding_dataset is not None and "dataset" in df.columns:
+                df = df[df["dataset"] == perturbation_embedding_dataset]
+            emb_dict = {}
+            for _, row in df.iterrows():
+                emb = row[perturbation_embedding_column]
+                if emb is not None and not (isinstance(emb, float) and np.isnan(emb)):
+                    emb_dict[str(row[perturbation_embedding_name_column]).strip()] = np.asarray(emb, dtype=np.float32)
+
+            all_pert_names = getattr(datamodule, "all_perturbation_names",
+                                     datamodule.train_context["perturbation_uniques"])
+            emb_dim = next(iter(emb_dict.values())).shape[0]
+            emb_matrix = torch.zeros(self.n_perts, emb_dim)
+            matched = 0
+            for i, name in enumerate(all_pert_names):
+                if name in emb_dict:
+                    emb_matrix[i] = torch.from_numpy(emb_dict[name])
+                    matched += 1
+            self.pert_embedding = torch.nn.Embedding.from_pretrained(
+                emb_matrix, freeze=freeze_embeddings
+            )
+            pert_network_input_dim = emb_dim
+            log.info(
+                "CPA: Initialized %d/%d learnable perturbation embeddings "
+                "(dim=%d, freeze=%s) from %s [%s]",
+                matched, len(all_pert_names), emb_dim, freeze_embeddings,
+                perturbation_embedding_path, perturbation_embedding_column,
+            )
+
         self.pert_network = MLP(
-            input_dim=self.n_perts,
+            input_dim=pert_network_input_dim,
             hidden_dim=self.hidden_dim,
             output_dim=self.n_latent,
             n_layers=self.n_layers_pert_emb,
@@ -296,7 +339,12 @@ class CPA(PerturbationModel):
             sampled_z = qz.sample((n_samples,))
             z_basal = self.encoder.z_transformation(sampled_z)
 
-        z_pert_true = self.pert_network(perts)  # perturbation encoder
+        if self.pert_embedding is not None:
+            pert_indices = perts.argmax(dim=-1)
+            perts_input = self.pert_embedding(pert_indices)
+        else:
+            perts_input = perts
+        z_pert_true = self.pert_network(perts_input)  # perturbation encoder
         z_pert = z_pert_true
         z_covs_dict = torch.zeros_like(z_basal)  # ([n_samples,] batch_size, n_latent)
 

@@ -1,0 +1,29 @@
+# @package _global_
+
+defaults:
+  - override /model: latent_additive
+  - override /data: sciplex3_unseen
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  learnable_embeddings: true
+  freeze_embeddings: false
+  perturbation_embedding_path: ${paths.work_dir}/fp_lmp_embeddings/tahoe_sci_op3_updated.pkl
+  perturbation_embedding_column: "ECFP:2"
+  perturbation_embedding_name_column: original_pert_name
+  perturbation_embedding_dataset: sciplex3
+  dropout: 0.3
+  encoder_width: 5376
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 192
+  lr: 3.411309338851789e-05
+  n_layers: 2
+  softplus_output: true
+  wd: 6.078971860813963e-11
+

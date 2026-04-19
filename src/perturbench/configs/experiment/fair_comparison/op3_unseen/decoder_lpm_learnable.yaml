@@ -1,0 +1,27 @@
+# @package _global_
+
+defaults:
+  - override /model: decoder_only
+  - override /data: op3_unseen
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  learnable_embeddings: true
+  freeze_embeddings: false
+  perturbation_embedding_path: ${paths.work_dir}/fp_lmp_embeddings/tahoe_sci_op3_updated.pkl
+  perturbation_embedding_column: "LPM_emb"
+  perturbation_embedding_name_column: original_pert_name
+  perturbation_embedding_dataset: op3
+  encoder_width: 4352
+  lr: 0.00018605849939523224
+  n_layers: 1
+  softplus_output: false
+  use_covariates: true
+  use_perturbations: true
+  wd: 1.1403528578455292e-06
+

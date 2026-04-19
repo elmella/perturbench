@@ -96,9 +96,16 @@ class PerturbationDataSplitter:
                     unseen_fraction=splitter_config.unseen_fraction,
                     train_control_fraction=splitter_config.train_control_fraction,
                 )
+            elif splitter_config.task == "unseen_cv":
+                split = perturbation_datasplitter.split_cv_unseen_perturbations(
+                    seed=splitter_config.splitter_seed,
+                    n_folds=splitter_config.n_folds,
+                    fold=splitter_config.fold,
+                    train_control_fraction=splitter_config.train_control_fraction,
+                )
             else:
                 raise ValueError(
-                    'splitter_config.task must be "transfer", "combine", "combine_inverse", or "unseen"'
+                    'splitter_config.task must be "transfer", "combine", "combine_inverse", "unseen", or "unseen_cv"'
                 )
 
         assert len(split) == obs_dataframe.shape[0]
@@ -544,6 +551,78 @@ class PerturbationDataSplitter:
         self.summary_dataframes[split_key] = split_summary_df
         if print_split:
             print(f"Unseen split: {num_unseen}/{len(all_perts)} perturbations held out")
+            print("Split summary: ")
+            print(split_summary_df)
+
+        return self.obs_dataframe[split_key]
+
+    def split_cv_unseen_perturbations(
+        self,
+        fold: int,
+        n_folds: int = 4,
+        print_split: bool = True,
+        seed: int = 42,
+        train_control_fraction: float = 0.5,
+    ):
+        """K-fold cross-validation over completely unseen perturbations.
+
+        Partitions all non-control perturbations into `n_folds` equal groups
+        by a seeded shuffle. For the given `fold`:
+          - test  = group[fold]
+          - val   = group[(fold + 1) % n_folds]
+          - train = all remaining groups
+        This keeps val unseen (to enable early stopping on the unseen task)
+        while rotating cleanly over all folds so every perturbation appears
+        in the test set exactly once across the full CV sweep.
+
+        Args:
+            fold: Which fold (0..n_folds-1) is the test set this run.
+            n_folds: Number of CV folds (default 4 -> 25% test per fold).
+            print_split: Whether to print the split summary.
+            seed: Random seed controlling the perturbation partition.
+            train_control_fraction: Fraction of control cells for training.
+
+        Returns:
+            split: train/val/test labels as a pd.Series over obs_dataframe.
+        """
+        if fold < 0 or fold >= n_folds:
+            raise ValueError(f"fold must be in [0, {n_folds}), got {fold}")
+
+        split_key = f"unseen_cv_seed{seed}_n{n_folds}_fold{fold}"
+        self.split_params[split_key] = {
+            "n_folds": n_folds,
+            "fold": fold,
+            "train_control_fraction": train_control_fraction,
+        }
+
+        all_perts = sorted(
+            p
+            for p in self.obs_dataframe[self.perturbation_key].unique()
+            if p != self.perturbation_control_value
+        )
+        rng = random.Random(seed)
+        rng.shuffle(all_perts)
+
+        groups = [all_perts[i::n_folds] for i in range(n_folds)]
+        test_perts = set(groups[fold])
+        val_perts = set(groups[(fold + 1) % n_folds])
+        train_perts = set(all_perts) - test_perts - val_perts
+
+        self.obs_dataframe[split_key] = [None] * self.obs_dataframe.shape[0]
+        pert_col = self.obs_dataframe[self.perturbation_key]
+        self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+        self.obs_dataframe.loc[pert_col.isin(val_perts), split_key] = "val"
+        self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
+
+        self._split_controls(seed, split_key, train_control_fraction)
+
+        split_summary_df = self._summarize_split(split_key)
+        self.summary_dataframes[split_key] = split_summary_df
+        if print_split:
+            print(
+                f"Unseen CV split: fold {fold}/{n_folds} "
+                f"(train={len(train_perts)}, val={len(val_perts)}, test={len(test_perts)} perturbations)"
+            )
             print("Split summary: ")
             print(split_summary_df)
 

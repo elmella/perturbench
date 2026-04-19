@@ -1,0 +1,24 @@
+# @package _global_
+
+defaults:
+  - override /model: linear_additive
+  - override /data: sciplex3
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+model:
+  lr: 0.0007787610860511324
+  wd: 1.0632418512521614e-08
+
+  learnable_embeddings: true
+  freeze_embeddings: false
+  perturbation_embedding_path: ${paths.work_dir}/fp_lmp_embeddings/tahoe_sci_op3_updated.pkl
+  perturbation_embedding_column: "LPM_emb"
+  perturbation_embedding_name_column: original_pert_name
+  perturbation_embedding_dataset: sciplex3
+data:
+  perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/common_perturbations.txt

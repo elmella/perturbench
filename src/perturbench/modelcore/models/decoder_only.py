@@ -30,6 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 import numpy as np
@@ -53,6 +54,12 @@ class DecoderOnly(PerturbationModel):
         softplus_output=True,
         use_covariates=True,
         use_perturbations=True,
+        learnable_embeddings: bool = False,
+        freeze_embeddings: bool = False,
+        perturbation_embedding_path: str | None = None,
+        perturbation_embedding_column: str | None = None,
+        perturbation_embedding_name_column: str = "original_pert_name",
+        perturbation_embedding_dataset: str | None = None,
         lr: float | None = None,
         wd: float | None = None,
         lr_scheduler_freq: int | None = None,
@@ -108,9 +115,34 @@ class DecoderOnly(PerturbationModel):
             else 0
         )
 
-        n_perts = self.n_perts if use_perturbations else 0
+        # Learnable perturbation embeddings
+        self.pert_embedding = None
+        pert_dim = self.n_perts if use_perturbations else 0
 
-        decoder_input_dim = n_total_covariates + n_perts
+        if learnable_embeddings and perturbation_embedding_path is not None and datamodule is not None and use_perturbations:
+            import pandas as pd
+            df = pd.read_pickle(perturbation_embedding_path)
+            if perturbation_embedding_dataset is not None and "dataset" in df.columns:
+                df = df[df["dataset"] == perturbation_embedding_dataset]
+            emb_dict = {}
+            for _, row in df.iterrows():
+                emb = row[perturbation_embedding_column]
+                if emb is not None and not (isinstance(emb, float) and np.isnan(emb)):
+                    emb_dict[str(row[perturbation_embedding_name_column]).strip()] = np.asarray(emb, dtype=np.float32)
+
+            all_pert_names = getattr(datamodule, "all_perturbation_names",
+                                     datamodule.train_context["perturbation_uniques"])
+            emb_dim = next(iter(emb_dict.values())).shape[0]
+            emb_matrix = torch.zeros(self.n_perts, emb_dim)
+            for i, name in enumerate(all_pert_names):
+                if name in emb_dict:
+                    emb_matrix[i] = torch.from_numpy(emb_dict[name])
+            self.pert_embedding = nn.Embedding.from_pretrained(
+                emb_matrix, freeze=freeze_embeddings
+            )
+            pert_dim = emb_dim
+
+        decoder_input_dim = n_total_covariates + pert_dim
 
         self.decoder = MLP(decoder_input_dim, encoder_width, self.n_genes, n_layers)
         self.softplus_output = softplus_output
@@ -123,13 +155,19 @@ class DecoderOnly(PerturbationModel):
         perturbation: torch.Tensor,
         covariates: dict[str, torch.Tensor],
     ):
+        if self.pert_embedding is not None:
+            pert_indices = perturbation.argmax(dim=-1)
+            pert_input = self.pert_embedding(pert_indices)
+        else:
+            pert_input = perturbation
+
         if self.use_covariates and self.use_perturbations:
             embedding = torch.cat([cov.squeeze() for cov in covariates.values()], dim=1)
-            embedding = torch.cat([perturbation, embedding], dim=1)
+            embedding = torch.cat([pert_input, embedding], dim=1)
         elif self.use_covariates:
             embedding = torch.cat([cov.squeeze() for cov in covariates.values()], dim=1)
         elif self.use_perturbations:
-            embedding = perturbation
+            embedding = pert_input
 
         predicted_perturbed_expression = self.decoder(embedding)
 

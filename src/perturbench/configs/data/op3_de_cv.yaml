@@ -1,0 +1,19 @@
+defaults:
+  - transform: linear_model_pipeline
+  - splitter: unseen_cv_task
+  - evaluation: default
+
+_target_: perturbench.data.modules.AnnDataLitModule
+datapath: ${paths.data_dir}/op3_de_genes.h5ad
+perturbation_key: sm_name
+perturbation_combination_delimiter: +
+perturbation_control_value: Dimethyl Sulfoxide
+covariate_keys: [cell_type]
+batch_size: 4000
+num_workers: 8
+batch_sample: True
+add_controls: True
+use_counts: False
+embedding_key: null
+evaluation:
+  chunk_size: 50

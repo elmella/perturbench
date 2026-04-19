@@ -54,6 +54,12 @@ class LatentAdditive(PerturbationModel):
         inject_covariates_encoder: bool = False,
         inject_covariates_decoder: bool = False,
         n_total_covariates: int | None = None,
+        learnable_embeddings: bool = False,
+        freeze_embeddings: bool = False,
+        perturbation_embedding_path: str | None = None,
+        perturbation_embedding_column: str | None = None,
+        perturbation_embedding_name_column: str = "original_pert_name",
+        perturbation_embedding_dataset: str | None = None,
         datamodule: L.LightningDataModule | None = None,
     ) -> None:
         """
@@ -129,8 +135,46 @@ class LatentAdditive(PerturbationModel):
         self.decoder = MLP(
             decoder_input_dim, encoder_width, self.n_genes, n_layers, dropout
         )
+
+        # Build learnable perturbation embedding if pretrained embeddings are available
+        self.learnable_embeddings = learnable_embeddings
+        self.pert_embedding = None
+        pert_encoder_input_dim = self.n_perts
+
+        if learnable_embeddings and perturbation_embedding_path is not None and datamodule is not None:
+            import pandas as pd
+            emb_dict = self._load_embedding_dict(
+                perturbation_embedding_path,
+                perturbation_embedding_column,
+                perturbation_embedding_name_column,
+                perturbation_embedding_dataset,
+            )
+            # Use full perturbation list (train + unseen) to match one-hot indices
+            all_pert_names = getattr(datamodule, 'all_perturbation_names',
+                                     datamodule.train_context["perturbation_uniques"])
+            first_emb = next(iter(emb_dict.values()))
+            emb_dim = first_emb.shape[0]
+            emb_matrix = torch.zeros(self.n_perts, emb_dim)
+            matched = 0
+            for i, name in enumerate(all_pert_names):
+                if i < self.n_perts and name in emb_dict:
+                    emb_matrix[i] = torch.from_numpy(
+                        np.asarray(emb_dict[name], dtype=np.float32)
+                    )
+                    matched += 1
+            self.pert_embedding = nn.Embedding.from_pretrained(
+                emb_matrix, freeze=freeze_embeddings
+            )
+            pert_encoder_input_dim = emb_dim
+            log.info(
+                "Initialized %d/%d learnable perturbation embeddings "
+                "(dim=%d, freeze=%s) from %s [%s]",
+                matched, len(all_pert_names), emb_dim, freeze_embeddings,
+                perturbation_embedding_path, perturbation_embedding_column,
+            )
+
         self.pert_encoder = MLP(
-            self.n_perts, encoder_width, latent_dim, n_layers, dropout
+            pert_encoder_input_dim, encoder_width, latent_dim, n_layers, dropout
         )
 
         if sparse_additive_mechanism:
@@ -143,6 +187,22 @@ class LatentAdditive(PerturbationModel):
         self.sparse_additive_mechanism = sparse_additive_mechanism
         self.inject_covariates_encoder = inject_covariates_encoder
         self.inject_covariates_decoder = inject_covariates_decoder
+
+    @staticmethod
+    def _load_embedding_dict(path, column, name_column, dataset_filter):
+        """Load pretrained embeddings from a pickle file into a dict."""
+        import pandas as pd
+        df = pd.read_pickle(path)
+        if dataset_filter is not None and "dataset" in df.columns:
+            df = df[df["dataset"] == dataset_filter]
+        emb_dict = {}
+        for _, row in df.iterrows():
+            emb = row[column]
+            if emb is None or (isinstance(emb, float) and np.isnan(emb)):
+                continue
+            name = str(row[name_column]).strip()
+            emb_dict[name] = np.asarray(emb, dtype=np.float32)
+        return emb_dict
 
     def forward(
         self,
@@ -159,7 +219,15 @@ class LatentAdditive(PerturbationModel):
             control_input = torch.cat([control_input, merged_covariates], dim=1)
 
         latent_control = self.gene_encoder(control_input)
-        latent_perturbation = self.pert_encoder(perturbation)
+
+        if self.pert_embedding is not None:
+            # Convert one-hot perturbation to index, look up learnable embedding
+            pert_indices = perturbation.argmax(dim=-1)
+            pert_input = self.pert_embedding(pert_indices)
+        else:
+            pert_input = perturbation
+
+        latent_perturbation = self.pert_encoder(pert_input)
 
         if self.sparse_additive_mechanism:
             mask = self.mask_encoder(perturbation)
