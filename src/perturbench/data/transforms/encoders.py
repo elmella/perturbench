@@ -29,10 +29,13 @@ class OneHotEncode(Transform):
             sparse_output=False,
             **kwargs,
         )
+        # Fit once here. Because categories are fixed at construction, every
+        # subsequent call should be a pure transform — no refit needed.
+        self.one_hot_encoder.fit(np.array(categories[0]).reshape(-1, 1))
 
     def __call__(self, labels: Sequence[str]):
         string_array = np.array(labels).reshape(-1, 1)
-        encoded = self.one_hot_encoder.fit_transform(string_array)
+        encoded = self.one_hot_encoder.transform(string_array)
         return torch.Tensor(encoded)
 
     def __repr__(self):
@@ -53,10 +56,12 @@ class LabelEncode(Transform):
     def __init__(self, values: Sequence[str]):
         categories = [np.array(values)]
         self.ordinal_encoder = OrdinalEncoder(categories=categories)
+        # Fit once with fixed categories so __call__ stays as pure transform.
+        self.ordinal_encoder.fit(categories[0].reshape(-1, 1))
 
     def __call__(self, labels: Sequence[str]):
         string_array = np.array(labels).reshape(-1, 1)
-        return torch.Tensor(self.ordinal_encoder.fit_transform(string_array))
+        return torch.Tensor(self.ordinal_encoder.transform(string_array))
 
     def __repr__(self):
         _base = super().__repr__()
@@ -80,6 +85,10 @@ class MultiLabelEncode(Transform):
         self.label_binarizer = MultiLabelBinarizer(
             classes=list(classes), sparse_output=False
         )
+        # Fit once so every __call__ is a pure transform. With `classes` set
+        # in the constructor, the argument to fit is only used for shape and
+        # does not influence the stored class set.
+        self.label_binarizer.fit([[]])
 
     @functools.cached_property
     def classes(self):
@@ -90,7 +99,7 @@ class MultiLabelEncode(Transform):
         if not labels or isinstance(labels[0], str):
             labels = [labels]
         self._check_inputs(labels)
-        encoded = self.label_binarizer.fit_transform(labels)
+        encoded = self.label_binarizer.transform(labels)
         return torch.from_numpy(encoded)
 
     def _check_inputs(self, labels: BatchMultiLabel):

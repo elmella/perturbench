@@ -3,6 +3,13 @@ covariate_keys: [cell_type]
 n_folds: 4
 fold: 0  # override per run, 0..n_folds-1
 train_control_fraction: 0.5
+# val_type: "unseen" -> val is a separate held-out perturbation group (compound
+#                        generalization signal). train = 50% of perts.
+# val_type: "in_distribution" -> train = 75% of perts; val is a stratified
+#                                 cell-level slice of each train (pert, covariate)
+#                                 group, controlled by val_cell_fraction.
+val_type: unseen
+val_cell_fraction: 0.08  # used only when val_type=in_distribution
 splitter_seed: 42
 save: True
 output_path: "${paths.output_dir}/"

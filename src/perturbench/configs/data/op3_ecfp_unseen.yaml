@@ -19,5 +19,8 @@ perturbation_embedding_path: ${paths.work_dir}/fp_lmp_embeddings/tahoe_sci_op3_u
 perturbation_embedding_column: "ECFP:2"
 perturbation_embedding_name_column: original_pert_name
 perturbation_embedding_dataset: op3
+# Restrict dataset to compounds that have an LPM embedding so that
+# onehot/ECFP/LPM runs all train and evaluate on the same compound pool.
+perturbation_subset_path: ${paths.data_dir}/op3_lpm_available_compounds.txt
 evaluation:
   chunk_size: 50

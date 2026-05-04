@@ -207,7 +207,8 @@ class DecoderOnly(PerturbationModel):
         self.log(
             "val_loss",
             val_loss,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
             prog_bar=True,
             logger=True,
             batch_size=len(batch),

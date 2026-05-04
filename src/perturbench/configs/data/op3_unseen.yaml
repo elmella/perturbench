@@ -15,5 +15,8 @@ batch_sample: True
 add_controls: True
 use_counts: False
 embedding_key: null
+# Restrict dataset to compounds that have an LPM embedding so that
+# onehot/ECFP/LPM runs all train and evaluate on the same compound pool.
+perturbation_subset_path: ${paths.data_dir}/op3_lpm_available_compounds.txt
 evaluation:
   chunk_size: 50

@@ -1,0 +1,17 @@
+task: fixed_test
+covariate_keys: [cell_type]
+# Path to a text file with one compound name per line. This list defines the
+# test set exactly. Any other compound in the dataset goes to train.
+test_compounds_path: ${paths.data_dir}/op3_signatures_test_compounds.txt
+train_control_fraction: 0.5
+# val_type: "in_distribution" -> val is a stratified cell-level slice of train
+#                                  perts (val_cell_fraction per (pert, cov)).
+# val_type: "unseen"          -> val = a random val_unseen_fraction of train
+#                                  perts, held out disjoint from both train
+#                                  and test at the compound level.
+val_type: in_distribution
+val_cell_fraction: 0.08
+val_unseen_fraction: 0.1
+splitter_seed: 42
+save: True
+output_path: "${paths.output_dir}/"

@@ -1,0 +1,28 @@
+defaults:
+  - transform: molecule_embedding_pipeline
+  - splitter: cell_type_transfer_task
+  - evaluation: default
+
+_target_: perturbench.data.modules.AnnDataLitModule
+datapath: ${paths.data_dir}/srivatsan20_processed.h5ad
+perturbation_key: condition
+perturbation_combination_delimiter: +
+perturbation_control_value: control
+covariate_keys: [cell_type]
+batch_size: 4000
+num_workers: 8
+batch_sample: True
+add_controls: True
+use_counts: False
+embedding_key: null
+# Default embeddings: last epoch from the all-genes single run.
+# Override at the CLI with e.g.:
+#   data.perturbation_embedding_path=...
+#   data.perturbation_embedding_column=lpm_style_embeddings_l1000
+perturbation_embedding_path: ${oc.env:L1000_EMB_PATH,${paths.work_dir}/all_l1000_25_epochs/sci_single_run_all_l1000_25_epochs/sci_lpm_style_embeddings_epoch_25.pkl}
+perturbation_embedding_column: ${oc.env:L1000_EMB_COLUMN,lpm_style_embeddings_all}
+perturbation_embedding_name_column: original_pert_name
+perturbation_embedding_dataset: sciplex3
+perturbation_embedding_name_remap:
+  "(+)-JQ1": "JQ1"
+  "ENMD-2076 L-(+)-Tartaric acid ": "ENMD-2076"

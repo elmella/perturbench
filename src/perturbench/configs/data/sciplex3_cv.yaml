@@ -1,0 +1,20 @@
+defaults:
+  - transform: linear_model_pipeline
+  - splitter: unseen_cv_task
+  - evaluation: final_test
+
+_target_: perturbench.data.modules.AnnDataLitModule
+datapath: ${paths.data_dir}/srivatsan20_processed.h5ad
+perturbation_key: condition
+perturbation_combination_delimiter: +
+perturbation_control_value: control
+covariate_keys: [cell_type]
+batch_size: 4000
+num_workers: 8
+batch_sample: True
+add_controls: True
+use_counts: False
+embedding_key: null
+# 177-pert pool: every sciplex3 compound that has an LPM embedding in
+# epoch_20.pkl. Onehot/ECFP/L1000 all train+evaluate on the same compounds.
+perturbation_subset_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/sciplex3_lpm_available_perturbations.txt

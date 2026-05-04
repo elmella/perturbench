@@ -13,11 +13,16 @@ run_gpu() {
     local out_dir="$RESULTS_DIR/$name"
     local ckpt_dir="$out_dir/checkpoints"
 
-    # Check if there's an existing checkpoint to resume from
+    # Check if there's an existing checkpoint to resume from. Prefer last.ckpt
+    # (saved every epoch) over the best-monitor ckpt for accurate resume.
     local ckpt_arg=""
     if [ -d "$ckpt_dir" ] && ls "$ckpt_dir"/*.ckpt &>/dev/null; then
       local ckpt
-      ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
+      if [ -f "$ckpt_dir/last.ckpt" ]; then
+        ckpt="$ckpt_dir/last.ckpt"
+      else
+        ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
+      fi
       ckpt_arg="ckpt_path='$ckpt'"
       echo "[GPU $gpu_id] Resuming $name from $(basename $ckpt)"
     else

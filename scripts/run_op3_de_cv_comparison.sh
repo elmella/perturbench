@@ -1,28 +1,40 @@
 #!/usr/bin/env bash
 # OP3 (de_test gene subset) 4-fold CV over unseen perturbations.
 #
-# Runs each (model, embedding) pair across all 4 folds. Each fold holds out
-# 25% of perturbations as test; val is a rotated 25%; train is the remaining 50%.
+# Runs each (model, embedding) pair across all 4 folds. Test is always 25% of
+# compounds (one fold group). The val set depends on --val-type:
+#   unseen          (default): val = rotated 25% of compounds (also held out).
+#                   train = 50% of compounds.
+#   in_distribution:           val = stratified cell-level slice of train perts.
+#                              train = 75% of compounds.
 #
 # Usage:
-#   bash scripts/run_op3_de_cv_comparison.sh                  # fixed embeddings only
+#   bash scripts/run_op3_de_cv_comparison.sh                  # unseen val, default dir
+#   bash scripts/run_op3_de_cv_comparison.sh --val-type in_distribution
+#   bash scripts/run_op3_de_cv_comparison.sh --val-cell-fraction 0.05 ...
+#   bash scripts/run_op3_de_cv_comparison.sh --out-dir results/my_sweep
 #   bash scripts/run_op3_de_cv_comparison.sh --learnable      # add learnable ECFP/LPM
 #   bash scripts/run_op3_de_cv_comparison.sh --force          # retrain everything
 #   bash scripts/run_op3_de_cv_comparison.sh --folds 0,1      # subset of folds
 #   bash scripts/run_op3_de_cv_comparison.sh --models latent,cpa
 #
-# Results are organized as: $RESULTS_DIR/<experiment>/fold<k>/
-# Automatically resumes from checkpoint if a run was interrupted mid-training.
+# Default output directory depends on --val-type:
+#   unseen          -> results/op3_de_cv_comparison
+#   in_distribution -> results/op3_de_cv_comparison_indist
+# Override with --out-dir. Existing runs with a completed summary.csv are
+# skipped unless --force. Interrupted runs resume from the latest checkpoint.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-RESULTS_DIR="results/op3_de_cv_comparison"
+RESULTS_DIR=""
 FORCE=false
 LEARNABLE=false
 N_FOLDS=4
 FOLDS=""              # comma-separated list; default = all folds
 MODEL_FILTER=""
+VAL_TYPE="unseen"
+VAL_CELL_FRACTION=""  # empty -> use splitter config default
 
 while [ $# -gt 0 ]; do
   arg="$1"
@@ -33,9 +45,28 @@ while [ $# -gt 0 ]; do
     --folds=*) FOLDS="${arg#*=}"; shift ;;
     --models) MODEL_FILTER="$2"; shift 2 ;;
     --models=*) MODEL_FILTER="${arg#*=}"; shift ;;
+    --val-type) VAL_TYPE="$2"; shift 2 ;;
+    --val-type=*) VAL_TYPE="${arg#*=}"; shift ;;
+    --val-cell-fraction) VAL_CELL_FRACTION="$2"; shift 2 ;;
+    --val-cell-fraction=*) VAL_CELL_FRACTION="${arg#*=}"; shift ;;
+    --out-dir) RESULTS_DIR="$2"; shift 2 ;;
+    --out-dir=*) RESULTS_DIR="${arg#*=}"; shift ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
+
+case "$VAL_TYPE" in
+  unseen|in_distribution) ;;
+  *) echo "--val-type must be 'unseen' or 'in_distribution'"; exit 1 ;;
+esac
+
+if [ -z "$RESULTS_DIR" ]; then
+  if [ "$VAL_TYPE" = "in_distribution" ]; then
+    RESULTS_DIR="results/op3_de_cv_comparison_indist"
+  else
+    RESULTS_DIR="results/op3_de_cv_comparison"
+  fi
+fi
 
 EXPERIMENTS=(
   fair_comparison/op3_de_cv/linear_onehot
@@ -78,13 +109,39 @@ else
   IFS=',' read -ra FOLD_LIST <<< "$FOLDS"
 fi
 
+extract_model_family() {
+  # Return the model-family portion of an experiment name (everything before
+  # the first embedding token). e.g., cpa_noadv_ecfp_learnable -> cpa_noadv;
+  # latent_lpm -> latent. If no embedding token is present, returns the name.
+  local name="$1"
+  local IFS='_'
+  local -a parts
+  read -ra parts <<< "$name"
+  local family=""
+  for p in "${parts[@]}"; do
+    case "$p" in
+      onehot|ecfp|lpm) break ;;
+    esac
+    if [ -z "$family" ]; then family="$p"; else family="${family}_$p"; fi
+  done
+  [ -z "$family" ] && family="$name"
+  echo "$family"
+}
+
 matches_model_filter() {
+  # A filter matches a name if:
+  #   - filter == full name (e.g., cpa_ecfp matches only cpa_ecfp), OR
+  #   - filter == model family (e.g., cpa matches cpa_* but NOT cpa_noadv_*;
+  #     cpa_noadv matches only cpa_noadv_*).
   local name="$1"
   [ -z "$MODEL_FILTER" ] && return 0
+  local family
+  family="$(extract_model_family "$name")"
   IFS=',' read -ra filters <<< "$MODEL_FILTER"
-  for prefix in "${filters[@]}"; do
-    prefix=$(echo "$prefix" | xargs)
-    [[ "$name" == ${prefix}* ]] && return 0
+  for filter in "${filters[@]}"; do
+    filter=$(echo "$filter" | xargs)
+    [ "$name" = "$filter" ] && return 0
+    [ "$family" = "$filter" ] && return 0
   done
   return 1
 }
@@ -111,6 +168,8 @@ if [ ${#JOBS[@]} -eq 0 ]; then
 fi
 
 echo "Running ${#JOBS[@]} jobs across folds ${FOLD_LIST[*]}"
+echo "val_type: $VAL_TYPE${VAL_CELL_FRACTION:+, val_cell_fraction=$VAL_CELL_FRACTION}"
+echo "Output:   $RESULTS_DIR/"
 [ -n "$MODEL_FILTER" ] && echo "Model filter: $MODEL_FILTER"
 
 run_gpu() {
@@ -134,10 +193,16 @@ run_gpu() {
       echo "[GPU $gpu_id] Starting $name fold$fold (fresh)"
     fi
 
+    local extra_overrides=("data.splitter.val_type=$VAL_TYPE")
+    if [ -n "$VAL_CELL_FRACTION" ]; then
+      extra_overrides+=("data.splitter.val_cell_fraction=$VAL_CELL_FRACTION")
+    fi
+
     CUDA_VISIBLE_DEVICES=$gpu_id uv run train \
       experiment="$exp" \
       "hydra.run.dir=$out_dir" \
       "data.splitter.fold=$fold" \
+      "${extra_overrides[@]}" \
       $ckpt_arg
 
     echo "[GPU $gpu_id] Finished $name fold$fold"

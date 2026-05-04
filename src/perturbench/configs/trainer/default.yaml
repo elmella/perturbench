@@ -20,3 +20,11 @@ deterministic: False
 
 # log every N steps
 log_every_n_steps: 10
+
+# cudnn autotuner — picks fastest algo for the observed input shapes. Safe
+# because deterministic=False and shapes are fixed per model.
+benchmark: True
+
+# Skip Lightning's pre-train sanity validation steps. They don't update weights
+# so downstream metrics are unaffected; saves a few seconds per run.
+num_sanity_val_steps: 0

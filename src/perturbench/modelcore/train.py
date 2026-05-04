@@ -2,6 +2,7 @@ import logging
 from typing import List
 import hydra
 import lightning as L
+import torch
 from omegaconf import DictConfig
 from lightning.pytorch.loggers import Logger
 from perturbench.modelcore.utils import multi_instantiate
@@ -15,6 +16,12 @@ log = logging.getLogger(__name__)
 def train(runtime_context: dict):
     cfg = runtime_context["cfg"]
 
+    # Enable TensorCore-friendly FP32 matmul precision. Under precision=16 the
+    # main matmuls are FP16 already; this only affects residual FP32 paths
+    # (optimizer updates, loss reductions, log math). Accepted deviation from
+    # "highest" is well below the across-fold noise floor.
+    torch.set_float32_matmul_precision("high")
+
     # Set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
         L.seed_everything(cfg.seed, workers=True)
@@ -27,6 +34,14 @@ def train(runtime_context: dict):
 
     log.info("Instantiating model <%s>", cfg.model._target_)
     model: PerturbationModel = hydra.utils.instantiate(cfg.model, datamodule=datamodule)
+
+    # Allow overriding the LR scheduler / monitor key after instantiation so we
+    # can switch from val_loss to train_loss when val is disabled, without
+    # needing to plumb the kwarg through every model subclass.
+    lr_monitor_override = cfg.get("lr_monitor_key")
+    if lr_monitor_override is not None:
+        model.lr_monitor_key = lr_monitor_override
+        log.info("Overriding model.lr_monitor_key -> %s", lr_monitor_override)
 
     log.info("Instantiating callbacks...")
     callbacks: List[L.Callback] = multi_instantiate(cfg.get("callbacks"))

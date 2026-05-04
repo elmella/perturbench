@@ -102,15 +102,26 @@ class PerturbationDataSplitter:
                     n_folds=splitter_config.n_folds,
                     fold=splitter_config.fold,
                     train_control_fraction=splitter_config.train_control_fraction,
+                    val_type=splitter_config.get("val_type", "unseen"),
+                    val_cell_fraction=splitter_config.get("val_cell_fraction", 0.08),
+                )
+            elif splitter_config.task == "fixed_test":
+                split = perturbation_datasplitter.split_fixed_test_compounds(
+                    test_compounds_path=splitter_config.test_compounds_path,
+                    seed=splitter_config.splitter_seed,
+                    train_control_fraction=splitter_config.train_control_fraction,
+                    val_type=splitter_config.get("val_type", "in_distribution"),
+                    val_cell_fraction=splitter_config.get("val_cell_fraction", 0.08),
+                    val_unseen_fraction=splitter_config.get("val_unseen_fraction", 0.1),
                 )
             else:
                 raise ValueError(
-                    'splitter_config.task must be "transfer", "combine", "combine_inverse", "unseen", or "unseen_cv"'
+                    'splitter_config.task must be "transfer", "combine", "combine_inverse", "unseen", "unseen_cv", or "fixed_test"'
                 )
 
         assert len(split) == obs_dataframe.shape[0]
         assert split.index.equals(obs_dataframe.index)
-        for split_value in ["train", "val", "test"]:
+        for split_value in ["train", "test"]:
             assert split_value in split.unique()
 
         if splitter_config.get("save"):
@@ -563,17 +574,30 @@ class PerturbationDataSplitter:
         print_split: bool = True,
         seed: int = 42,
         train_control_fraction: float = 0.5,
+        val_type: str = "unseen",
+        val_cell_fraction: float = 0.08,
     ):
         """K-fold cross-validation over completely unseen perturbations.
 
         Partitions all non-control perturbations into `n_folds` equal groups
-        by a seeded shuffle. For the given `fold`:
-          - test  = group[fold]
-          - val   = group[(fold + 1) % n_folds]
-          - train = all remaining groups
-        This keeps val unseen (to enable early stopping on the unseen task)
-        while rotating cleanly over all folds so every perturbation appears
-        in the test set exactly once across the full CV sweep.
+        by a seeded shuffle. test = group[fold] always. The val set is
+        controlled by `val_type`:
+
+          - "unseen":         val = group[(fold + 1) % n_folds], train = rest.
+                              val perturbations are held out entirely, matching
+                              the unseen-perturbation evaluation regime. Use
+                              when val_loss should measure compound generalization
+                              (e.g., during hyperparameter search).
+
+          - "in_distribution": train perts = all non-test perts (i.e., 75% of
+                               compounds). val = a stratified cell-level slice
+                               of train perts, sampled per (perturbation,
+                               covariate) stratum. This measures fit, not
+                               compound generalization — appropriate when you
+                               are no longer searching hyperparameters and just
+                               need a stable signal for early stopping /
+                               checkpointing, and you want more compounds in
+                               train.
 
         Args:
             fold: Which fold (0..n_folds-1) is the test set this run.
@@ -581,18 +605,35 @@ class PerturbationDataSplitter:
             print_split: Whether to print the split summary.
             seed: Random seed controlling the perturbation partition.
             train_control_fraction: Fraction of control cells for training.
+            val_type: "unseen" or "in_distribution" (see above).
+            val_cell_fraction: Fraction of cells per (pert, covariate) stratum
+                held out for val when val_type == "in_distribution". Ignored
+                otherwise.
 
         Returns:
             split: train/val/test labels as a pd.Series over obs_dataframe.
         """
         if fold < 0 or fold >= n_folds:
             raise ValueError(f"fold must be in [0, {n_folds}), got {fold}")
+        if val_type not in ("unseen", "in_distribution"):
+            raise ValueError(
+                f"val_type must be 'unseen' or 'in_distribution', got {val_type!r}"
+            )
+        # val_cell_fraction == 0 disables val carving (everything stays in train).
+        # Otherwise it must be a strict fraction.
+        if val_type == "in_distribution" and not (0.0 <= val_cell_fraction < 1.0):
+            raise ValueError(
+                f"val_cell_fraction must be in [0, 1) for in_distribution val, "
+                f"got {val_cell_fraction}"
+            )
 
-        split_key = f"unseen_cv_seed{seed}_n{n_folds}_fold{fold}"
+        split_key = f"unseen_cv_seed{seed}_n{n_folds}_fold{fold}_{val_type}"
         self.split_params[split_key] = {
             "n_folds": n_folds,
             "fold": fold,
             "train_control_fraction": train_control_fraction,
+            "val_type": val_type,
+            "val_cell_fraction": val_cell_fraction,
         }
 
         all_perts = sorted(
@@ -605,24 +646,225 @@ class PerturbationDataSplitter:
 
         groups = [all_perts[i::n_folds] for i in range(n_folds)]
         test_perts = set(groups[fold])
-        val_perts = set(groups[(fold + 1) % n_folds])
-        train_perts = set(all_perts) - test_perts - val_perts
 
         self.obs_dataframe[split_key] = [None] * self.obs_dataframe.shape[0]
         pert_col = self.obs_dataframe[self.perturbation_key]
-        self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
-        self.obs_dataframe.loc[pert_col.isin(val_perts), split_key] = "val"
-        self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
 
+        if val_type == "unseen":
+            val_perts = set(groups[(fold + 1) % n_folds])
+            train_perts = set(all_perts) - test_perts - val_perts
+            self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+            self.obs_dataframe.loc[pert_col.isin(val_perts), split_key] = "val"
+            self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
+            n_train_perts = len(train_perts)
+            n_val_perts = len(val_perts)
+        else:  # in_distribution
+            train_perts = set(all_perts) - test_perts
+            # Mark all train-pert cells as train, test-pert cells as test.
+            self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+            self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
+            # val_cell_fraction <= 0 disables the val carve entirely.
+            if val_cell_fraction > 0:
+                train_mask = pert_col.isin(train_perts)
+                train_df = self.obs_dataframe[train_mask]
+                rng_np = np.random.RandomState(seed)
+                val_ix: list = []
+                group_cols = [self.perturbation_key] + list(self.covariate_keys)
+                for _, stratum_df in train_df.groupby(group_cols, observed=True):
+                    n_stratum = len(stratum_df)
+                    if n_stratum <= 1:
+                        continue
+                    n_val = max(1, int(round(n_stratum * val_cell_fraction)))
+                    n_val = min(n_val, n_stratum - 1)
+                    picks = rng_np.choice(
+                        stratum_df.index.to_numpy(), size=n_val, replace=False
+                    )
+                    val_ix.extend(picks.tolist())
+                self.obs_dataframe.loc[val_ix, split_key] = "val"
+            n_train_perts = len(train_perts)
+            n_val_perts = n_train_perts if val_cell_fraction > 0 else 0
+
+        # Control cells get split regardless of val_type.
         self._split_controls(seed, split_key, train_control_fraction)
+        # When val is disabled, push any control cells _split_controls assigned
+        # to val back to train.
+        if val_type == "in_distribution" and val_cell_fraction <= 0:
+            val_mask = self.obs_dataframe[split_key] == "val"
+            self.obs_dataframe.loc[val_mask, split_key] = "train"
 
         split_summary_df = self._summarize_split(split_key)
         self.summary_dataframes[split_key] = split_summary_df
         if print_split:
+            n_cells = {
+                k: int((self.obs_dataframe[split_key] == k).sum())
+                for k in ("train", "val", "test")
+            }
             print(
-                f"Unseen CV split: fold {fold}/{n_folds} "
-                f"(train={len(train_perts)}, val={len(val_perts)}, test={len(test_perts)} perturbations)"
+                f"Unseen CV split: fold {fold}/{n_folds}, val_type={val_type} "
+                f"(perts: train={n_train_perts}, val={n_val_perts}, "
+                f"test={len(test_perts)}; cells: train={n_cells['train']}, "
+                f"val={n_cells['val']}, test={n_cells['test']})"
             )
+            print("Split summary: ")
+            print(split_summary_df)
+
+        return self.obs_dataframe[split_key]
+
+    def split_fixed_test_compounds(
+        self,
+        test_compounds_path: str,
+        print_split: bool = True,
+        seed: int = 42,
+        train_control_fraction: float = 0.5,
+        val_type: str = "in_distribution",
+        val_cell_fraction: float = 0.08,
+        val_unseen_fraction: float = 0.1,
+    ):
+        """Split with a fixed set of test compounds loaded from a file.
+
+        Use this when you want to match an external benchmark that holds out a
+        specific compound list (e.g. op3_signatures' 35-compound seed=42 split).
+        Test compounds are exactly those listed in `test_compounds_path`. Any
+        compound in the dataset that is not in the file goes to the train pool.
+
+        The val set is controlled by `val_type`:
+          - "in_distribution": val = stratified cell-level slice of train
+            perturbations (`val_cell_fraction` of cells per (pert, covariate)
+            stratum). All train compounds stay in train; val just borrows a
+            few of their cells.
+          - "unseen": a fraction (`val_unseen_fraction`) of train compounds is
+            randomly set aside as val (disjoint from both train and test at
+            the compound level).
+
+        Args:
+            test_compounds_path: Path to a text file with one compound name per
+                line. Control label is ignored if present.
+            print_split: Whether to print the split summary.
+            seed: Random seed for val sampling.
+            train_control_fraction: Fraction of control cells for training.
+            val_type: "in_distribution" (default) or "unseen".
+            val_cell_fraction: Used only when val_type == "in_distribution".
+            val_unseen_fraction: Used only when val_type == "unseen".
+
+        Returns:
+            split: train/val/test labels as a pd.Series over obs_dataframe.
+
+        Raises:
+            FileNotFoundError: if `test_compounds_path` does not exist.
+            ValueError: if no test compound overlaps the dataset, or if
+                `val_type` is unrecognized.
+        """
+        path = os.path.expanduser(test_compounds_path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"test_compounds_path not found: {test_compounds_path}"
+            )
+        if val_type not in ("in_distribution", "unseen"):
+            raise ValueError(
+                f"val_type must be 'in_distribution' or 'unseen', got {val_type!r}"
+            )
+
+        with open(path) as fh:
+            requested_test = {
+                line.strip() for line in fh if line.strip()
+            }
+        # Don't let a stray control row in the file redirect DMSO to test.
+        requested_test.discard(self.perturbation_control_value)
+
+        # Map stripped names to the original (possibly whitespace-padded) names
+        # in the dataset so the test list works even when the dataset has
+        # trailing whitespace in some perturbation labels.
+        all_non_ctrl_perts_original = [
+            p
+            for p in self.obs_dataframe[self.perturbation_key].unique()
+            if p != self.perturbation_control_value
+        ]
+        strip_to_original = {str(p).strip(): p for p in all_non_ctrl_perts_original}
+        test_perts_stripped = requested_test & set(strip_to_original.keys())
+        if not test_perts_stripped:
+            raise ValueError(
+                f"No overlap between test_compounds_path ({len(requested_test)} perts) "
+                f"and dataset ({len(all_non_ctrl_perts_original)} non-control perts)."
+            )
+        test_perts = {strip_to_original[s] for s in test_perts_stripped}
+        all_non_ctrl_perts = set(all_non_ctrl_perts_original)
+        missing = sorted(requested_test - set(strip_to_original.keys()))
+
+        split_key = (
+            f"fixed_test_{os.path.basename(path)}_{val_type}_seed{seed}"
+        )
+        self.split_params[split_key] = {
+            "test_compounds_path": str(path),
+            "train_control_fraction": train_control_fraction,
+            "val_type": val_type,
+            "val_cell_fraction": val_cell_fraction,
+            "val_unseen_fraction": val_unseen_fraction,
+        }
+
+        self.obs_dataframe[split_key] = [None] * self.obs_dataframe.shape[0]
+        pert_col = self.obs_dataframe[self.perturbation_key]
+        self.obs_dataframe.loc[pert_col.isin(test_perts), split_key] = "test"
+
+        train_perts = all_non_ctrl_perts - test_perts
+
+        if val_type == "in_distribution":
+            # Mark all train-pert cells as train, carve out val at cell level.
+            # val_cell_fraction <= 0 disables val entirely (everything stays in train).
+            self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+            if val_cell_fraction > 0:
+                train_mask = pert_col.isin(train_perts)
+                train_df = self.obs_dataframe[train_mask]
+                rng_np = np.random.RandomState(seed)
+                val_ix: list = []
+                group_cols = [self.perturbation_key] + list(self.covariate_keys)
+                for _, stratum_df in train_df.groupby(group_cols, observed=True):
+                    n_stratum = len(stratum_df)
+                    if n_stratum <= 1:
+                        continue
+                    n_val = max(1, int(round(n_stratum * val_cell_fraction)))
+                    n_val = min(n_val, n_stratum - 1)
+                    picks = rng_np.choice(
+                        stratum_df.index.to_numpy(), size=n_val, replace=False
+                    )
+                    val_ix.extend(picks.tolist())
+                self.obs_dataframe.loc[val_ix, split_key] = "val"
+            n_val_perts = len(train_perts) if val_cell_fraction > 0 else 0
+        else:  # unseen: val compounds are a disjoint random slice of train
+            rng_np = np.random.RandomState(seed)
+            train_list = sorted(train_perts)
+            rng_np.shuffle(train_list)
+            n_val = max(1, int(round(len(train_list) * val_unseen_fraction)))
+            val_perts = set(train_list[:n_val])
+            train_perts = set(train_list[n_val:])
+            self.obs_dataframe.loc[pert_col.isin(train_perts), split_key] = "train"
+            self.obs_dataframe.loc[pert_col.isin(val_perts), split_key] = "val"
+            n_val_perts = len(val_perts)
+
+        self._split_controls(seed, split_key, train_control_fraction)
+
+        # When val is disabled (in_distribution + val_cell_fraction == 0),
+        # reassign any control cells _split_controls put in val back to train.
+        if val_type == "in_distribution" and val_cell_fraction <= 0:
+            val_mask = self.obs_dataframe[split_key] == "val"
+            self.obs_dataframe.loc[val_mask, split_key] = "train"
+
+        split_summary_df = self._summarize_split(split_key)
+        self.summary_dataframes[split_key] = split_summary_df
+        if print_split:
+            n_cells = {
+                k: int((self.obs_dataframe[split_key] == k).sum())
+                for k in ("train", "val", "test")
+            }
+            print(
+                f"Fixed-test split from {path} (val_type={val_type}): "
+                f"perts train={len(train_perts)}, val={n_val_perts}, "
+                f"test={len(test_perts)} (requested {len(requested_test)}; "
+                f"{len(missing)} missing from dataset); "
+                f"cells train={n_cells['train']}, val={n_cells['val']}, "
+                f"test={n_cells['test']}"
+            )
+            if missing:
+                print(f"  (missing compounds: {missing[:5]}{'…' if len(missing) > 5 else ''})")
             print("Split summary: ")
             print(split_summary_df)
 

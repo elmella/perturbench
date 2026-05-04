@@ -129,7 +129,9 @@ class AnnDataLitModule(L.LightningDataModule):
                 perturbation_embedding_column,
             )
 
-        # Filter to a pre-defined subset of perturbations (for fair comparisons)
+        # Filter to a pre-defined subset of perturbations (for fair comparisons).
+        # Strip whitespace on both sides so subset files work even when dataset
+        # perturbation names have stray trailing whitespace (e.g. "Lomustine ").
         if perturbation_subset_path is not None:
             subset = set(
                 line.strip()
@@ -137,7 +139,8 @@ class AnnDataLitModule(L.LightningDataModule):
                 if line.strip()
             )
             pert_col = adata.obs[perturbation_key]
-            keep_mask = pert_col.isin(subset) | (
+            pert_col_stripped = pert_col.astype(str).str.strip()
+            keep_mask = pert_col_stripped.isin(subset) | (
                 pert_col == perturbation_control_value
             )
             n_before = adata.n_obs
@@ -160,6 +163,8 @@ class AnnDataLitModule(L.LightningDataModule):
 
             train_adata = adata[split_dict["train"]]
             val_adata = adata[split_dict["val"]]
+            if val_adata.n_obs == 0:
+                val_adata = None
             test_adata = adata[split_dict["test"]]
 
         else:
@@ -236,8 +241,10 @@ class AnnDataLitModule(L.LightningDataModule):
 
             # Set transform pipeline for each dataset
             self.train_dataset.transform = transform_pipeline
-            self.val_dataset.transform = transform_pipeline
-            self.test_dataset.transform = transform_pipeline
+            if self.val_dataset is not None:
+                self.val_dataset.transform = transform_pipeline
+            if self.test_dataset is not None:
+                self.test_dataset.transform = transform_pipeline
 
         # Build example collation function
         if self.batch_sample is True:
@@ -389,9 +396,10 @@ class AnnDataLitModule(L.LightningDataModule):
                 shuffle=True,
             )
 
-    def val_dataloader(self) -> DataLoader | None:
+    def val_dataloader(self) -> DataLoader | list:
         if self.val_dataset is None:
-            return None
+            # Lightning rejects None; an empty list disables validation cleanly.
+            return []
         else:
             if self.batch_sample:
                 return batch_dataloader(

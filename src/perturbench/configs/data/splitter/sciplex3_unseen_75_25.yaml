@@ -1,0 +1,9 @@
+task: fixed_test
+covariate_keys: [cell_type]
+test_compounds_path: ${paths.work_dir}/notebooks/neurips2025/perturbench_data/sciplex3_test_compounds_75_25_seed42.txt
+val_type: in_distribution    # carve val from train cells (no extra perts held out)
+val_cell_fraction: 0.08      # 8% of cells per (pert, cell_type) stratum to val
+train_control_fraction: 0.5
+splitter_seed: 42
+save: True
+output_path: "${paths.output_dir}/"

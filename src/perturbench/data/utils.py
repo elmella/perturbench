@@ -169,8 +169,16 @@ def batch_dataloader(
         oversample: whether to oversample the data
         oversample_root: oversampling weight will be
           `(1/class_frac)^(1/oversample_root)`
-        kwargs: additional arguments to pass to DataLoaders
+        kwargs: additional arguments to pass to DataLoaders. When
+          num_workers > 0, pin_memory, persistent_workers, and prefetch_factor
+          are set to performance-friendly defaults unless the caller overrides
+          them. None of these flags change data values.
     """
+    num_workers = kwargs.get("num_workers", 0)
+    if num_workers and num_workers > 0:
+        kwargs.setdefault("pin_memory", True)
+        kwargs.setdefault("persistent_workers", True)
+        kwargs.setdefault("prefetch_factor", 4)
     if oversample:
         assert oversample_root > 0, "Oversample root must be greater than 0"
 

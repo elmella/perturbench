@@ -1,14 +1,12 @@
 """Plot op3 de-genes CV results: bar charts of mean metrics across folds
 with error bars (std across folds), grouped by (model, embedding)."""
 
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-RESULTS = Path("results/op3_de_cv_comparison/cv_summary.csv")
-OUT_PNG = Path("results/op3_de_cv_comparison/cv_summary.png")
 
 METRICS = [
     ("rmse_average", "RMSE (lower better)", False),
@@ -23,7 +21,23 @@ EMBED_COLORS = {"onehot": "#9E9E9E", "ecfp": "#1f77b4", "lpm": "#d62728"}
 
 
 def main() -> None:
-    df = pd.read_csv(RESULTS)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--results-dir",
+        default="results/op3_de_cv_comparison",
+        help="Directory containing cv_summary.csv (produced by aggregate_cv_metrics.py)",
+    )
+    parser.add_argument(
+        "--title",
+        default="OP3 (de-genes) 4-fold CV over unseen perturbations",
+        help="Chart title prefix",
+    )
+    args = parser.parse_args()
+
+    results_dir = Path(args.results_dir)
+    summary_csv = results_dir / "cv_summary.csv"
+    out_png = results_dir / "cv_summary.png"
+    df = pd.read_csv(summary_csv)
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), sharex=True)
 
@@ -60,13 +74,10 @@ def main() -> None:
         ax.grid(axis="y", linestyle=":", alpha=0.4)
 
     axes[0, 0].legend(title="Embedding", loc="upper right")
-    fig.suptitle(
-        "OP3 (de-genes) 4-fold CV over unseen perturbations — mean ± std across folds",
-        fontsize=13,
-    )
+    fig.suptitle(f"{args.title} — mean ± std across folds", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(OUT_PNG, dpi=140)
-    print(f"Wrote {OUT_PNG}")
+    fig.savefig(out_png, dpi=140)
+    print(f"Wrote {out_png}")
 
 
 if __name__ == "__main__":

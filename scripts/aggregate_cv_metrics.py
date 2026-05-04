@@ -30,7 +30,7 @@ def parse_experiment_name(exp_name: str) -> tuple[str, str]:
         cpa_noadv_lpm              -> ("cpa_noadv",  "lpm")
         cpa_noadv_ecfp_learnable   -> ("cpa_noadv",  "ecfp_learnable")
     """
-    embed_tokens = {"onehot", "ecfp", "lpm"}
+    embed_tokens = {"onehot", "ecfp", "lpm", "l1000"}
     parts = exp_name.split("_")
     for i, part in enumerate(parts):
         if part in embed_tokens:
