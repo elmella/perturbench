@@ -1,0 +1,11 @@
+task: fixed_test
+covariate_keys: [cell_type]
+# 34 compounds = op3_signatures_test_compounds.txt ∩ new-LPM 138-pert pool.
+# (BMS-265246 is excluded because it has no embedding in op3_emb_all_l1000_20.pkl.)
+test_compounds_path: ${paths.data_dir}/op3_signatures_test_compounds_lpm.txt
+val_type: in_distribution
+val_cell_fraction: 0.08
+train_control_fraction: 0.5
+splitter_seed: 42
+save: True
+output_path: "${paths.output_dir}/"
