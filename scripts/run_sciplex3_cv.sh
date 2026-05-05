@@ -388,7 +388,8 @@ for idx in "${!FOLD_LIST[@]}"; do
         flock -x 9
         job=$(head -n 1 "$queue_file" 2>/dev/null)
         if [ -n "$job" ]; then
-          sed -i '1d' "$queue_file"
+          tail -n +2 "$queue_file" > "${queue_file}.next"
+          mv "${queue_file}.next" "$queue_file"
         fi
         exec 9>&-
         [ -z "$job" ] && break
