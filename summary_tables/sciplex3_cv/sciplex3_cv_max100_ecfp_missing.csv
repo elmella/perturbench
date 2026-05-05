@@ -1,0 +1,9 @@
+input_folder,embedding,model,experiment,fold,status,summary_path,checkpoint_path,note
+results/max100,ecfp,linear,linear_ecfp,3,missing,results/max100/linear_ecfp/fold3/evaluation/summary.csv,,
+results/max100,ecfp,latent,latent_ecfp,2,checkpoint_only,results/max100/latent_ecfp/fold2/evaluation/summary.csv,results/max100/latent_ecfp/fold2/checkpoints/last.ckpt,
+results/max100,ecfp,latent,latent_ecfp,3,missing,results/max100/latent_ecfp/fold3/evaluation/summary.csv,,
+results/max100,ecfp,decoder,decoder_ecfp,3,missing,results/max100/decoder_ecfp/fold3/evaluation/summary.csv,,
+results/max100,ecfp,cpa,cpa_ecfp,2,missing,results/max100/cpa_ecfp/fold2/evaluation/summary.csv,,
+results/max100,ecfp,cpa,cpa_ecfp,3,missing,results/max100/cpa_ecfp/fold3/evaluation/summary.csv,,
+results/max100,ecfp,cpa_noadv,cpa_noadv_ecfp,2,directory_only,results/max100/cpa_noadv_ecfp/fold2/evaluation/summary.csv,,
+results/max100,ecfp,cpa_noadv,cpa_noadv_ecfp,3,missing,results/max100/cpa_noadv_ecfp/fold3/evaluation/summary.csv,,
