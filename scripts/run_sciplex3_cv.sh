@@ -23,6 +23,9 @@
 #   bash scripts/run_sciplex3_cv.sh --models latent,cpa   # filter architectures
 #   bash scripts/run_sciplex3_cv.sh --max-epochs 200      # override training length
 #   bash scripts/run_sciplex3_cv.sh --early-stopping 50   # enable val carve + early stop
+#   bash scripts/run_sciplex3_cv.sh --accelerator mps     # Apple Silicon / Metal
+#   bash scripts/run_sciplex3_cv.sh --parallel-jobs 1     # process-level parallelism
+#   bash scripts/run_sciplex3_cv.sh --num-workers 2       # dataloader workers per job
 #   bash scripts/run_sciplex3_cv.sh --force               # retrain everything
 set -e
 
@@ -39,6 +42,11 @@ FOLDS=""
 MODEL_FILTER=""
 MAX_EPOCHS=""
 EARLY_STOPPING_PATIENCE=""
+ACCELERATOR="gpu"
+DEVICES="1"
+PRECISION=""
+PARALLEL_JOBS=""
+NUM_WORKERS=""
 # Lower default than the framework's 400 to avoid OOMs during the test phase
 # of larger architectures (latent_additive in particular). Override with --eval-chunk-size.
 EVAL_CHUNK_SIZE="100"
@@ -62,6 +70,16 @@ while [ $# -gt 0 ]; do
     --max-epochs) MAX_EPOCHS="$2"; shift 2 ;;
     --max-epochs=*) MAX_EPOCHS="${arg#*=}"; shift ;;
     --early-stopping) EARLY_STOPPING_PATIENCE="$2"; shift 2 ;;
+    --accelerator) ACCELERATOR="$2"; shift 2 ;;
+    --accelerator=*) ACCELERATOR="${arg#*=}"; shift ;;
+    --devices) DEVICES="$2"; shift 2 ;;
+    --devices=*) DEVICES="${arg#*=}"; shift ;;
+    --precision) PRECISION="$2"; shift 2 ;;
+    --precision=*) PRECISION="${arg#*=}"; shift ;;
+    --parallel-jobs) PARALLEL_JOBS="$2"; shift 2 ;;
+    --parallel-jobs=*) PARALLEL_JOBS="${arg#*=}"; shift ;;
+    --num-workers) NUM_WORKERS="$2"; shift 2 ;;
+    --num-workers=*) NUM_WORKERS="${arg#*=}"; shift ;;
     --eval-chunk-size) EVAL_CHUNK_SIZE="$2"; shift 2 ;;
     --eval-chunk-size=*) EVAL_CHUNK_SIZE="${arg#*=}"; shift ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
@@ -109,8 +127,29 @@ fi
 # field by default, so we add it).
 TRAIN_OVERRIDES+=("+callbacks.model_checkpoint.save_last=true")
 TRAIN_OVERRIDES+=("data.evaluation.chunk_size=$EVAL_CHUNK_SIZE")
+TRAIN_OVERRIDES+=("trainer.accelerator=$ACCELERATOR")
+TRAIN_OVERRIDES+=("trainer.devices=$DEVICES")
 if [ -n "$MAX_EPOCHS" ]; then
   TRAIN_OVERRIDES+=("trainer.max_epochs=$MAX_EPOCHS")
+fi
+if [ -n "$NUM_WORKERS" ]; then
+  TRAIN_OVERRIDES+=("data.num_workers=$NUM_WORKERS")
+  TRAIN_OVERRIDES+=("+data.num_val_workers=$NUM_WORKERS")
+  TRAIN_OVERRIDES+=("+data.num_test_workers=$NUM_WORKERS")
+fi
+if [ -n "$PRECISION" ]; then
+  TRAIN_OVERRIDES+=("trainer.precision=$PRECISION")
+elif [ "$ACCELERATOR" = "mps" ]; then
+  # Lightning's mixed precision settings are CUDA-oriented in this project.
+  # Use full precision on Apple MPS unless the caller explicitly overrides it.
+  TRAIN_OVERRIDES+=("trainer.precision=32-true")
+fi
+
+if [ -z "$PARALLEL_JOBS" ]; then
+  case "$ACCELERATOR" in
+    gpu) PARALLEL_JOBS=2 ;;
+    *) PARALLEL_JOBS=1 ;;
+  esac
 fi
 
 # --------- Experiment list ---------
@@ -203,11 +242,13 @@ echo "Folds:      ${FOLD_LIST[*]} of $N_FOLDS"
 echo "L1000 emb:  $EMB_PATH ($EMB_COLUMN)"
 echo "Output:     $RESULTS_DIR"
 echo "Jobs:       $TOTAL_JOBS (run fold-major, all models in fold k complete before fold k+1)"
+echo "Accelerator: $ACCELERATOR (devices=$DEVICES, parallel jobs=$PARALLEL_JOBS)"
+[ -n "$NUM_WORKERS" ] && echo "Workers:    $NUM_WORKERS per dataloader"
 [ -n "$MODEL_FILTER" ] && echo "Model filter: $MODEL_FILTER"
 echo "---"
 
-run_gpu() {
-  local gpu_id=$1
+run_worker() {
+  local worker_id=$1
   shift
   for job in "$@"; do
     local exp="${job%|*}"
@@ -227,9 +268,9 @@ run_gpu() {
         ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
       fi
       ckpt_arg="ckpt_path='$ckpt'"
-      echo "[GPU $gpu_id] Resuming $name fold$fold from $(basename $ckpt)"
+      echo "[worker $worker_id] Resuming $name fold$fold from $(basename $ckpt)"
     else
-      echo "[GPU $gpu_id] Starting $name fold$fold (fresh)"
+      echo "[worker $worker_id] Starting $name fold$fold (fresh)"
     fi
 
     local extra=()
@@ -243,29 +284,40 @@ run_gpu() {
     esac
 
     # Disable set -e for the per-job command so a failure (OOM, transient bug)
-    # doesn't cascade-skip the rest of this GPU's queue.
+    # doesn't cascade-skip the rest of this worker's queue.
     set +e
-    CUDA_VISIBLE_DEVICES=$gpu_id uv run train \
-      experiment="$exp" \
-      "hydra.run.dir=$out_dir" \
-      "data.splitter.fold=$fold" \
-      "data.splitter.n_folds=$N_FOLDS" \
-      "${TRAIN_OVERRIDES[@]}" \
-      "${extra[@]}" \
-      $ckpt_arg
+    if [ "$ACCELERATOR" = "gpu" ]; then
+      CUDA_VISIBLE_DEVICES=$worker_id uv run train \
+        experiment="$exp" \
+        "hydra.run.dir=$out_dir" \
+        "data.splitter.fold=$fold" \
+        "data.splitter.n_folds=$N_FOLDS" \
+        "${TRAIN_OVERRIDES[@]}" \
+        "${extra[@]}" \
+        $ckpt_arg
+    else
+      PYTORCH_ENABLE_MPS_FALLBACK=1 uv run train \
+        experiment="$exp" \
+        "hydra.run.dir=$out_dir" \
+        "data.splitter.fold=$fold" \
+        "data.splitter.n_folds=$N_FOLDS" \
+        "${TRAIN_OVERRIDES[@]}" \
+        "${extra[@]}" \
+        $ckpt_arg
+    fi
     local rc=$?
     set -e
 
     if [ $rc -ne 0 ]; then
-      echo "[GPU $gpu_id] Job FAILED (rc=$rc): $name fold$fold (continuing)"
+      echo "[worker $worker_id] Job FAILED (rc=$rc): $name fold$fold (continuing)"
     else
-      echo "[GPU $gpu_id] Finished $name fold$fold"
+      echo "[worker $worker_id] Finished $name fold$fold"
     fi
   done
 }
 
 # Run each fold's jobs to completion before moving on. Within a fold, the
-# jobs are round-robin-split across the 2 GPUs and run in parallel.
+# jobs are round-robin-split across workers and run in parallel.
 for idx in "${!FOLD_LIST[@]}"; do
   fold="${FOLD_LIST[$idx]}"
   fold_jobs_str="${JOBS_PER_FOLD[$idx]}"
@@ -277,20 +329,33 @@ for idx in "${!FOLD_LIST[@]}"; do
     [ -n "$line" ] && fold_jobs+=("$line")
   done <<< "$fold_jobs_str"
 
-  gpu0_jobs=()
-  gpu1_jobs=()
+  worker_jobs=()
+  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+    worker_jobs[$worker_id]=""
+  done
   for i in "${!fold_jobs[@]}"; do
-    if (( i % 2 == 0 )); then gpu0_jobs+=("${fold_jobs[$i]}"); else gpu1_jobs+=("${fold_jobs[$i]}"); fi
+    worker_id=$((i % PARALLEL_JOBS))
+    worker_jobs[$worker_id]+="${fold_jobs[$i]}"$'\n'
   done
 
   echo ""
   echo "=== Fold $fold (${#fold_jobs[@]} jobs) ==="
-  echo "GPU 0 queue: ${#gpu0_jobs[@]} jobs"
-  echo "GPU 1 queue: ${#gpu1_jobs[@]} jobs"
+  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+    count=0
+    while IFS= read -r line; do
+      [ -n "$line" ] && count=$((count + 1))
+    done <<< "${worker_jobs[$worker_id]}"
+    echo "Worker $worker_id queue: $count jobs"
+  done
   echo "---"
 
-  run_gpu 0 "${gpu0_jobs[@]}" &
-  run_gpu 1 "${gpu1_jobs[@]}" &
+  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+    queue=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && queue+=("$line")
+    done <<< "${worker_jobs[$worker_id]}"
+    [ "${#queue[@]}" -gt 0 ] && run_worker "$worker_id" "${queue[@]}" &
+  done
   wait
   echo "=== Fold $fold complete ==="
 done
