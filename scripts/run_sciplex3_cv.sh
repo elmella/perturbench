@@ -10,8 +10,9 @@
 # Each (model, fold) combo writes to its own subdirectory; the directory shape
 # is identical across embeddings and folds, so aggregation/plotting is generic.
 #
-# Resume: each run saves a `last.ckpt` after every epoch. If a run is killed,
-# rerunning the script resumes the last (model, fold) pair from `last.ckpt`.
+# Checkpoints: no-early-stopping runs keep the lowest-train-loss checkpoint,
+# plus a rolling `last.ckpt` every 50 epochs, at train end, and on interruption.
+# Rerunning resumes from `last.ckpt` when available.
 #
 # Usage:
 #   bash scripts/run_sciplex3_cv.sh                       # all 60 jobs
@@ -124,14 +125,18 @@ else
   TRAIN_OVERRIDES+=(
     "callbacks=no_early_stopping"
     "callbacks.model_checkpoint.monitor=train_loss"
+    "+callbacks.model_checkpoint.mode=min"
+    "+callbacks.model_checkpoint.save_top_k=1"
+    "+callbacks.model_checkpoint.filename=best_train_loss"
     "+lr_monitor_key=train_loss"
+    "+evaluate_train_checkpoints=true"
+    "+rolling_checkpoint.dirpath=\${hydra:runtime.output_dir}/checkpoints"
+    "+rolling_checkpoint.filename=last.ckpt"
+    "+rolling_checkpoint.every_n_epochs=50"
     "data.splitter.val_cell_fraction=0.0"
     "data.splitter.val_type=in_distribution"
   )
 fi
-# Always-on: save last.ckpt for resume (model_checkpoint config has no save_last
-# field by default, so we add it).
-TRAIN_OVERRIDES+=("+callbacks.model_checkpoint.save_last=true")
 TRAIN_OVERRIDES+=("data.evaluation.chunk_size=$EVAL_CHUNK_SIZE")
 TRAIN_OVERRIDES+=("trainer.accelerator=$ACCELERATOR")
 TRAIN_OVERRIDES+=("trainer.devices=$DEVICES")
@@ -294,17 +299,20 @@ run_worker() {
     local ckpt_arg=""
     local ckpt=""
     # Resume in priority order:
-    #   1. local last.ckpt (in-progress run for this tag)
+    #   1. local rolling/final checkpoint (in-progress run for this tag)
     #   2. any other local .ckpt
-    #   3. last.ckpt from --starting-ckpt-tag (used for two-phase training:
-    #      e.g. continue from max100's saved weights into a new max500 run)
+    #   3. rolling/final checkpoint from --starting-ckpt-tag (used for two-phase
+    #      training: e.g. continue from max100's final weights into max500)
     if [ -f "$ckpt_dir/last.ckpt" ]; then
       ckpt="$ckpt_dir/last.ckpt"
     elif [ -d "$ckpt_dir" ] && ls "$ckpt_dir"/*.ckpt &>/dev/null; then
       ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
     elif [ -n "$STARTING_CKPT_TAG" ]; then
-      starting_ckpt="results/sciplex3_cv/$STARTING_CKPT_TAG/$name/fold${fold}/checkpoints/last.ckpt"
-      if [ -f "$starting_ckpt" ]; then
+      starting_ckpt_dir="results/sciplex3_cv/$STARTING_CKPT_TAG/$name/fold${fold}/checkpoints"
+      if [ -f "$starting_ckpt_dir/last.ckpt" ]; then
+        ckpt="$starting_ckpt_dir/last.ckpt"
+      elif [ -d "$starting_ckpt_dir" ] && ls "$starting_ckpt_dir"/*.ckpt &>/dev/null; then
+        starting_ckpt=$(ls -t "$starting_ckpt_dir"/*.ckpt | head -1)
         ckpt="$starting_ckpt"
       fi
     fi

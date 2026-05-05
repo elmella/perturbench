@@ -1,9 +1,12 @@
 import logging
 from typing import List
+from pathlib import Path
 import hydra
 import lightning as L
 import torch
-from omegaconf import DictConfig
+import pandas as pd
+from omegaconf import DictConfig, open_dict
+from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.loggers import Logger
 from perturbench.modelcore.utils import multi_instantiate
 from perturbench.modelcore.models import PerturbationModel
@@ -11,6 +14,46 @@ from hydra.core.hydra_config import HydraConfig
 
 
 log = logging.getLogger(__name__)
+
+
+class RollingCheckpoint(Callback):
+    """Overwrite one checkpoint every N epochs, at train end, and on interruption."""
+
+    def __init__(
+        self,
+        dirpath: str | Path,
+        filename: str = "last.ckpt",
+        every_n_epochs: int = 50,
+    ) -> None:
+        self.dirpath = Path(dirpath)
+        self.filename = filename
+        self.every_n_epochs = every_n_epochs
+
+    def _save(self, trainer: L.Trainer) -> None:
+        self.dirpath.mkdir(parents=True, exist_ok=True)
+        path = self.dirpath / self.filename
+        log.info("Saving rolling checkpoint to %s", path)
+        trainer.save_checkpoint(path)
+
+    def on_train_epoch_end(
+        self, trainer: L.Trainer, pl_module: L.LightningModule
+    ) -> None:
+        if self.every_n_epochs <= 0:
+            return
+        epoch_number = trainer.current_epoch + 1
+        if epoch_number % self.every_n_epochs == 0:
+            self._save(trainer)
+
+    def on_train_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        self._save(trainer)
+
+    def on_exception(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+        exception: BaseException,
+    ) -> None:
+        self._save(trainer)
 
 
 def train(runtime_context: dict):
@@ -45,6 +88,18 @@ def train(runtime_context: dict):
 
     log.info("Instantiating callbacks...")
     callbacks: List[L.Callback] = multi_instantiate(cfg.get("callbacks"))
+    rolling_cfg = cfg.get("rolling_checkpoint") or cfg.get("rolling_latest_checkpoint")
+    if rolling_cfg is not None:
+        checkpoint_dir = rolling_cfg.get("dirpath")
+        if checkpoint_dir is None:
+            checkpoint_dir = Path(HydraConfig.get().runtime.output_dir) / "checkpoints"
+        callbacks.append(
+            RollingCheckpoint(
+                dirpath=checkpoint_dir,
+                filename=rolling_cfg.get("filename", "last.ckpt"),
+                every_n_epochs=rolling_cfg.get("every_n_epochs", 50),
+            )
+        )
 
     log.info("Instantiating loggers...")
     loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
@@ -63,20 +118,56 @@ def train(runtime_context: dict):
     summary_metrics_dict = {}
     if cfg.get("test"):
         log.info("Starting testing!")
-        if cfg.get("train"):
-            if (
-                trainer.checkpoint_callback is None
-                or trainer.checkpoint_callback.best_model_path == ""
-            ):
-                ckpt_path = None
-            else:
-                ckpt_path = "best"
+        original_eval_save_dir = Path(model.evaluation_config.save_dir)
+
+        def resolve_test_ckpt(test_ckpt_path):
+            if test_ckpt_path in (None, "none", "current"):
+                return None
+            if test_ckpt_path == "best":
+                if (
+                    trainer.checkpoint_callback is None
+                    or trainer.checkpoint_callback.best_model_path == ""
+                ):
+                    return None
+                return "best"
+            return test_ckpt_path
+
+        if cfg.get("train") and cfg.get("evaluate_train_checkpoints"):
+            final_ckpt = original_eval_save_dir.parent / "checkpoints" / "last.ckpt"
+            evaluations = [
+                ("best_train_loss", resolve_test_ckpt("best")),
+                ("final", str(final_ckpt) if final_ckpt.exists() else None),
+            ]
+        elif cfg.get("train"):
+            evaluations = [("summary", resolve_test_ckpt(cfg.get("test_ckpt_path", "best")))]
         else:
-            ckpt_path = cfg.get("ckpt_path")
-        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
-        summary_metrics_dict = model.summary_metrics.to_dict()[
-            model.summary_metrics.columns[0]
-        ]
+            evaluations = [("summary", cfg.get("ckpt_path"))]
+
+        summary_tables = []
+        for label, ckpt_path in evaluations:
+            eval_save_dir = original_eval_save_dir / label
+            with open_dict(model.evaluation_config):
+                model.evaluation_config.save_dir = str(eval_save_dir)
+            log.info("Testing %s checkpoint with ckpt_path=%s", label, ckpt_path)
+            trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
+
+            if model.summary_metrics is not None:
+                value_col = model.summary_metrics.columns[0]
+                summary = model.summary_metrics.rename(columns={value_col: label})
+                summary_tables.append(summary)
+                for metric, value in summary[label].to_dict().items():
+                    summary_metrics_dict[f"{label}_{metric}"] = value
+
+        with open_dict(model.evaluation_config):
+            model.evaluation_config.save_dir = str(original_eval_save_dir)
+
+        if summary_tables:
+            combined_summary = pd.concat(summary_tables, axis=1)
+            original_eval_save_dir.mkdir(parents=True, exist_ok=True)
+            combined_summary.to_csv(
+                original_eval_save_dir / "summary.csv",
+                index_label="metric",
+            )
 
     test_metrics = trainer.callback_metrics
     # merge train and test metrics, converting tensors to plain floats

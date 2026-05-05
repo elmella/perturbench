@@ -186,21 +186,28 @@ for model in models:
                 )
                 continue
 
-            value_col = [c for c in df.columns if c != "metric"][0]
-            for _, row in df.iterrows():
-                per_fold_rows.append(
-                    {
-                        "input_folder": str(base_dir),
-                        "embedding": safe_embedding,
-                        "model": model,
-                        "experiment": experiment,
-                        "fold": fold,
-                        "metric": row["metric"],
-                        "value": row[value_col],
-                        "model_class": value_col,
-                        "summary_path": str(summary_path),
-                    }
+            value_cols = [c for c in df.columns if c != "metric"]
+            for value_col in value_cols:
+                eval_checkpoint = (
+                    value_col
+                    if value_col in {"best_train_loss", "final", "summary"}
+                    else "legacy"
                 )
+                for _, row in df.iterrows():
+                    per_fold_rows.append(
+                        {
+                            "input_folder": str(base_dir),
+                            "embedding": safe_embedding,
+                            "model": model,
+                            "experiment": experiment,
+                            "fold": fold,
+                            "eval_checkpoint": eval_checkpoint,
+                            "metric": row["metric"],
+                            "value": row[value_col],
+                            "model_class": value_col,
+                            "summary_path": str(summary_path),
+                        }
+                    )
         elif last_ckpt.exists() or ckpts:
             status = "checkpoint_only"
         elif fold_dir.exists():
@@ -252,14 +259,21 @@ if per_fold.empty:
     )
 else:
     grouped = (
-        per_fold.groupby(["input_folder", "embedding", "model", "experiment", "metric"])[
-            "value"
-        ]
+        per_fold.groupby(
+            [
+                "input_folder",
+                "embedding",
+                "model",
+                "experiment",
+                "eval_checkpoint",
+                "metric",
+            ]
+        )["value"]
         .agg(mean="mean", std="std", n="count")
         .reset_index()
     )
     wide = grouped.pivot(
-        index=["input_folder", "embedding", "model", "experiment"],
+        index=["input_folder", "embedding", "model", "experiment", "eval_checkpoint"],
         columns="metric",
         values=["mean", "std", "n"],
     )
@@ -312,6 +326,7 @@ else:
         "embedding",
         "model",
         "experiment",
+        "eval_checkpoint",
         "completed_folds",
         "missing_folds",
         "missing_count",
@@ -320,8 +335,9 @@ else:
 
 summary.to_csv(summary_out, index=False)
 
-done_count = len(per_fold[["model", "fold"]].drop_duplicates()) if not per_fold.empty else 0
-expected = len(models) * n_folds
+done_count = len(per_fold[["model", "fold", "eval_checkpoint"]].drop_duplicates()) if not per_fold.empty else 0
+eval_count = per_fold["eval_checkpoint"].nunique() if not per_fold.empty else 1
+expected = len(models) * n_folds * eval_count
 print(f"Input:       {base_dir}")
 print(f"Embedding:   {safe_embedding} ({embedding_token})")
 print(f"Completed:   {done_count}/{expected} model-fold evaluations")

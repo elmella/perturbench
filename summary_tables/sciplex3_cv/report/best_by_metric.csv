@@ -1,0 +1,7 @@
+metric,direction,embedding,model,mean,std,n
+rmse_average,lower,ecfp,cpa_noadv,0.022855,0.0004339354790749,4
+cosine_pca_average,higher,ecfp,decoder,0.919475,0.0106690752488988,4
+cosine_logfc,higher,lpm,latent,0.312425,0.026125131578616,4
+r2_score_scores,higher,ecfp,cpa_noadv,0.000872255,0.0020157996577289,4
+mmd_pca,lower,ecfp,cpa_noadv,0.840525,0.0368309991718932,4
+top_k_recall_scores,higher,lpm,cpa_noadv,0.00313775,0.0026816931685038,4
