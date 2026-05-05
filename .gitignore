@@ -200,3 +200,5 @@ fp_lmp_embeddings
 */.DS_Store
 
 .DS_Store
+
+notebooks/colab.ipynb

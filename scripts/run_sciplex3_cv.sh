@@ -157,6 +157,10 @@ if [ -z "$PARALLEL_JOBS" ]; then
     *) PARALLEL_JOBS=1 ;;
   esac
 fi
+USE_FLOCK_QUEUE=false
+if command -v flock >/dev/null 2>&1; then
+  USE_FLOCK_QUEUE=true
+fi
 
 # --------- Experiment list ---------
 EXPERIMENTS=(
@@ -276,6 +280,8 @@ echo "---"
 
 run_worker() {
   local worker_id=$1
+  local fail_file=$2
+  shift
   shift
   for job in "$@"; do
     local exp="${job%|*}"
@@ -346,17 +352,16 @@ run_worker() {
 
     if [ $rc -ne 0 ]; then
       echo "[worker $worker_id] Job FAILED (rc=$rc): $name fold$fold (continuing)"
+      printf '%s\tfold%s\trc=%s\n' "$name" "$fold" "$rc" >> "$fail_file"
     else
       echo "[worker $worker_id] Finished $name fold$fold"
     fi
   done
 }
 
-# Run each fold's jobs to completion before moving on. Within a fold, all
-# workers pull from a shared queue (work-stealing): as soon as a worker
-# finishes one job, it grabs the next one from the queue. This eliminates
-# the idle time we'd otherwise see when one worker happens to draw all the
-# slow jobs (e.g. latent_*) and the other finishes its lighter queue early.
+# Run each fold's jobs to completion before moving on. On Linux, workers pull
+# from a shared queue with flock-based work stealing. macOS lacks flock by
+# default, so it falls back to deterministic round-robin worker queues.
 for idx in "${!FOLD_LIST[@]}"; do
   fold="${FOLD_LIST[$idx]}"
   fold_jobs_str="${JOBS_PER_FOLD[$idx]}"
@@ -368,37 +373,74 @@ for idx in "${!FOLD_LIST[@]}"; do
     [ -n "$line" ] && fold_jobs+=("$line")
   done <<< "$fold_jobs_str"
 
-  echo ""
-  echo "=== Fold $fold (${#fold_jobs[@]} jobs, $PARALLEL_JOBS workers, work-stealing) ==="
-  echo "---"
+  fail_file=$(mktemp)
+  : > "$fail_file"
 
-  # Shared FIFO queue file. Workers atomically pop one job at a time using
-  # flock on a sibling lock file, so faster workers automatically pick up
-  # extra work while slower ones are still busy.
-  queue_file=$(mktemp)
-  queue_lock="${queue_file}.lock"
-  : > "$queue_lock"
-  printf '%s\n' "${fold_jobs[@]}" > "$queue_file"
+  if [ "$USE_FLOCK_QUEUE" = true ]; then
+    echo ""
+    echo "=== Fold $fold (${#fold_jobs[@]} jobs, $PARALLEL_JOBS workers, work-stealing) ==="
+    echo "---"
 
-  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
-    (
-      while true; do
-        # Atomically pop the first line from the shared queue.
-        exec 9>"$queue_lock"
-        flock -x 9
-        job=$(head -n 1 "$queue_file" 2>/dev/null)
-        if [ -n "$job" ]; then
-          tail -n +2 "$queue_file" > "${queue_file}.next"
-          mv "${queue_file}.next" "$queue_file"
-        fi
-        exec 9>&-
-        [ -z "$job" ] && break
-        run_worker "$worker_id" "$job"
-      done
-    ) &
-  done
+    queue_file=$(mktemp)
+    queue_lock="${queue_file}.lock"
+    : > "$queue_lock"
+    printf '%s\n' "${fold_jobs[@]}" > "$queue_file"
+
+    for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+      (
+        while true; do
+          exec 9>"$queue_lock"
+          flock -x 9
+          job=$(head -n 1 "$queue_file" 2>/dev/null)
+          if [ -n "$job" ]; then
+            tail -n +2 "$queue_file" > "${queue_file}.next"
+            mv "${queue_file}.next" "$queue_file"
+          fi
+          exec 9>&-
+          [ -z "$job" ] && break
+          run_worker "$worker_id" "$fail_file" "$job"
+        done
+      ) &
+    done
+  else
+    worker_jobs=()
+    for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+      worker_jobs[$worker_id]=""
+    done
+    for i in "${!fold_jobs[@]}"; do
+      worker_id=$((i % PARALLEL_JOBS))
+      worker_jobs[$worker_id]+="${fold_jobs[$i]}"$'\n'
+    done
+
+    echo ""
+    echo "=== Fold $fold (${#fold_jobs[@]} jobs, $PARALLEL_JOBS workers, round-robin) ==="
+    for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+      count=0
+      while IFS= read -r line; do
+        [ -n "$line" ] && count=$((count + 1))
+      done <<< "${worker_jobs[$worker_id]}"
+      echo "Worker $worker_id queue: $count jobs"
+    done
+    echo "---"
+
+    for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
+      queue=()
+      while IFS= read -r line; do
+        [ -n "$line" ] && queue+=("$line")
+      done <<< "${worker_jobs[$worker_id]}"
+      [ "${#queue[@]}" -gt 0 ] && run_worker "$worker_id" "$fail_file" "${queue[@]}" &
+    done
+  fi
   wait
-  rm -f "$queue_file" "$queue_lock"
+  if [ -s "$fail_file" ]; then
+    echo "=== Fold $fold completed with failed jobs ==="
+    cat "$fail_file"
+    [ "${queue_file:-}" ] && rm -f "$queue_file" "${queue_lock:-}"
+    rm -f "$fail_file"
+    exit 1
+  fi
+  [ "${queue_file:-}" ] && rm -f "$queue_file" "${queue_lock:-}"
+  rm -f "$fail_file"
   echo "=== Fold $fold complete ==="
 done
 
