@@ -42,6 +42,8 @@ FOLDS=""
 MODEL_FILTER=""
 MAX_EPOCHS=""
 EARLY_STOPPING_PATIENCE=""
+EMBEDDING_FILTER=""
+STARTING_CKPT_TAG=""
 ACCELERATOR="gpu"
 DEVICES="1"
 PRECISION=""
@@ -70,6 +72,10 @@ while [ $# -gt 0 ]; do
     --max-epochs) MAX_EPOCHS="$2"; shift 2 ;;
     --max-epochs=*) MAX_EPOCHS="${arg#*=}"; shift ;;
     --early-stopping) EARLY_STOPPING_PATIENCE="$2"; shift 2 ;;
+    --embedding|--embeddings) EMBEDDING_FILTER="$2"; shift 2 ;;
+    --embedding=*|--embeddings=*) EMBEDDING_FILTER="${arg#*=}"; shift ;;
+    --starting-ckpt-tag) STARTING_CKPT_TAG="$2"; shift 2 ;;
+    --starting-ckpt-tag=*) STARTING_CKPT_TAG="${arg#*=}"; shift ;;
     --accelerator) ACCELERATOR="$2"; shift 2 ;;
     --accelerator=*) ACCELERATOR="${arg#*=}"; shift ;;
     --devices) DEVICES="$2"; shift 2 ;;
@@ -206,6 +212,24 @@ matches_model_filter() {
   done
   return 1
 }
+# --embeddings filter: matches the embedding-token suffix on the experiment
+# name. "lpm" and "l1000" both map to the L1000 LPM model (same embedding
+# type, different file source). Comma-separated list, e.g. "lpm,ecfp".
+matches_embedding_filter() {
+  local name="$1"
+  [ -z "$EMBEDDING_FILTER" ] && return 0
+  IFS=',' read -ra filters <<< "$EMBEDDING_FILTER"
+  for filter in "${filters[@]}"; do
+    filter=$(echo "$filter" | xargs | tr '[:upper:]' '[:lower:]')
+    case "$filter" in
+      lpm|l1000) [[ "$name" == *_l1000 ]] && return 0 ;;
+      ecfp)      [[ "$name" == *_ecfp ]] && return 0 ;;
+      onehot)    [[ "$name" == *_onehot ]] && return 0 ;;
+      *) echo "Unknown --embeddings filter: $filter (expected: lpm/l1000, ecfp, onehot)" >&2; exit 1 ;;
+    esac
+  done
+  return 1
+}
 
 # --------- Job list (fold-major) ---------
 # We run all (model × embedding) jobs for fold k before starting fold k+1.
@@ -220,6 +244,7 @@ for fold in "${FOLD_LIST[@]}"; do
   for exp in "${EXPERIMENTS[@]}"; do
     name=$(basename "$exp")
     matches_model_filter "$name" || continue
+    matches_embedding_filter "$name" || continue
     out_dir="$RESULTS_DIR/$name/fold${fold}"
     summary="$out_dir/evaluation/summary.csv"
     if [ "$FORCE" = true ] || [ ! -f "$summary" ]; then
@@ -244,7 +269,9 @@ echo "Output:     $RESULTS_DIR"
 echo "Jobs:       $TOTAL_JOBS (run fold-major, all models in fold k complete before fold k+1)"
 echo "Accelerator: $ACCELERATOR (devices=$DEVICES, parallel jobs=$PARALLEL_JOBS)"
 [ -n "$NUM_WORKERS" ] && echo "Workers:    $NUM_WORKERS per dataloader"
-[ -n "$MODEL_FILTER" ] && echo "Model filter: $MODEL_FILTER"
+[ -n "$MODEL_FILTER" ] && echo "Model filter:     $MODEL_FILTER"
+[ -n "$EMBEDDING_FILTER" ] && echo "Embedding filter: $EMBEDDING_FILTER"
+[ -n "$STARTING_CKPT_TAG" ] && echo "Starting ckpt tag: $STARTING_CKPT_TAG (resume from results/sciplex3_cv/$STARTING_CKPT_TAG/.../last.ckpt when local ckpt missing)"
 echo "---"
 
 run_worker() {
@@ -259,16 +286,25 @@ run_worker() {
     local ckpt_dir="$out_dir/checkpoints"
 
     local ckpt_arg=""
-    if [ -d "$ckpt_dir" ] && ls "$ckpt_dir"/*.ckpt &>/dev/null; then
-      local ckpt
-      # Prefer last.ckpt for resume; fallback to most-recent
-      if [ -f "$ckpt_dir/last.ckpt" ]; then
-        ckpt="$ckpt_dir/last.ckpt"
-      else
-        ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
+    local ckpt=""
+    # Resume in priority order:
+    #   1. local last.ckpt (in-progress run for this tag)
+    #   2. any other local .ckpt
+    #   3. last.ckpt from --starting-ckpt-tag (used for two-phase training:
+    #      e.g. continue from max100's saved weights into a new max500 run)
+    if [ -f "$ckpt_dir/last.ckpt" ]; then
+      ckpt="$ckpt_dir/last.ckpt"
+    elif [ -d "$ckpt_dir" ] && ls "$ckpt_dir"/*.ckpt &>/dev/null; then
+      ckpt=$(ls -t "$ckpt_dir"/*.ckpt | head -1)
+    elif [ -n "$STARTING_CKPT_TAG" ]; then
+      starting_ckpt="results/sciplex3_cv/$STARTING_CKPT_TAG/$name/fold${fold}/checkpoints/last.ckpt"
+      if [ -f "$starting_ckpt" ]; then
+        ckpt="$starting_ckpt"
       fi
+    fi
+    if [ -n "$ckpt" ]; then
       ckpt_arg="ckpt_path='$ckpt'"
-      echo "[worker $worker_id] Resuming $name fold$fold from $(basename $ckpt)"
+      echo "[worker $worker_id] Resuming $name fold$fold from $ckpt"
     else
       echo "[worker $worker_id] Starting $name fold$fold (fresh)"
     fi
