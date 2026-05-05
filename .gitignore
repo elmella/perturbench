@@ -196,3 +196,7 @@ all_l1000_25_epochs
 fp_lmp_embeddings
 
 .claude
+
+*/.DS_Store
+
+.DS_Store
