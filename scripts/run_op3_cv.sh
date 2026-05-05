@@ -243,7 +243,10 @@ run_gpu() {
   done
 }
 
-# Run fold-major: all jobs in fold k, then fold k+1.
+# Run fold-major with a work-stealing pool inside each fold. Both GPUs
+# share a single queue and each grabs the next job as soon as it's free,
+# so a heavy run on one GPU doesn't leave the other one idle.
+N_GPUS=2
 for idx in "${!FOLD_LIST[@]}"; do
   fold="${FOLD_LIST[$idx]}"
   fold_jobs_str="${JOBS_PER_FOLD[$idx]}"
@@ -253,21 +256,32 @@ for idx in "${!FOLD_LIST[@]}"; do
     [ -n "$line" ] && fold_jobs+=("$line")
   done <<< "$fold_jobs_str"
 
-  gpu0_jobs=()
-  gpu1_jobs=()
-  for i in "${!fold_jobs[@]}"; do
-    if (( i % 2 == 0 )); then gpu0_jobs+=("${fold_jobs[$i]}"); else gpu1_jobs+=("${fold_jobs[$i]}"); fi
-  done
-
   echo ""
-  echo "=== Fold $fold (${#fold_jobs[@]} jobs) ==="
-  echo "GPU 0 queue: ${#gpu0_jobs[@]} jobs"
-  echo "GPU 1 queue: ${#gpu1_jobs[@]} jobs"
+  echo "=== Fold $fold (${#fold_jobs[@]} jobs, $N_GPUS GPUs, work-stealing) ==="
   echo "---"
 
-  run_gpu 0 "${gpu0_jobs[@]}" &
-  run_gpu 1 "${gpu1_jobs[@]}" &
+  queue_file=$(mktemp)
+  queue_lock="${queue_file}.lock"
+  : > "$queue_lock"
+  printf '%s\n' "${fold_jobs[@]}" > "$queue_file"
+
+  for ((gpu_id=0; gpu_id<N_GPUS; gpu_id++)); do
+    (
+      while true; do
+        exec 9>"$queue_lock"
+        flock -x 9
+        job=$(head -n 1 "$queue_file" 2>/dev/null)
+        if [ -n "$job" ]; then
+          sed -i '1d' "$queue_file"
+        fi
+        exec 9>&-
+        [ -z "$job" ] && break
+        run_gpu "$gpu_id" "$job"
+      done
+    ) &
+  done
   wait
+  rm -f "$queue_file" "$queue_lock"
   echo "=== Fold $fold complete ==="
 done
 

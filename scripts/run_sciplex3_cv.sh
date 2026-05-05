@@ -316,8 +316,11 @@ run_worker() {
   done
 }
 
-# Run each fold's jobs to completion before moving on. Within a fold, the
-# jobs are round-robin-split across workers and run in parallel.
+# Run each fold's jobs to completion before moving on. Within a fold, all
+# workers pull from a shared queue (work-stealing): as soon as a worker
+# finishes one job, it grabs the next one from the queue. This eliminates
+# the idle time we'd otherwise see when one worker happens to draw all the
+# slow jobs (e.g. latent_*) and the other finishes its lighter queue early.
 for idx in "${!FOLD_LIST[@]}"; do
   fold="${FOLD_LIST[$idx]}"
   fold_jobs_str="${JOBS_PER_FOLD[$idx]}"
@@ -329,34 +332,36 @@ for idx in "${!FOLD_LIST[@]}"; do
     [ -n "$line" ] && fold_jobs+=("$line")
   done <<< "$fold_jobs_str"
 
-  worker_jobs=()
-  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
-    worker_jobs[$worker_id]=""
-  done
-  for i in "${!fold_jobs[@]}"; do
-    worker_id=$((i % PARALLEL_JOBS))
-    worker_jobs[$worker_id]+="${fold_jobs[$i]}"$'\n'
-  done
-
   echo ""
-  echo "=== Fold $fold (${#fold_jobs[@]} jobs) ==="
-  for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
-    count=0
-    while IFS= read -r line; do
-      [ -n "$line" ] && count=$((count + 1))
-    done <<< "${worker_jobs[$worker_id]}"
-    echo "Worker $worker_id queue: $count jobs"
-  done
+  echo "=== Fold $fold (${#fold_jobs[@]} jobs, $PARALLEL_JOBS workers, work-stealing) ==="
   echo "---"
 
+  # Shared FIFO queue file. Workers atomically pop one job at a time using
+  # flock on a sibling lock file, so faster workers automatically pick up
+  # extra work while slower ones are still busy.
+  queue_file=$(mktemp)
+  queue_lock="${queue_file}.lock"
+  : > "$queue_lock"
+  printf '%s\n' "${fold_jobs[@]}" > "$queue_file"
+
   for ((worker_id=0; worker_id<PARALLEL_JOBS; worker_id++)); do
-    queue=()
-    while IFS= read -r line; do
-      [ -n "$line" ] && queue+=("$line")
-    done <<< "${worker_jobs[$worker_id]}"
-    [ "${#queue[@]}" -gt 0 ] && run_worker "$worker_id" "${queue[@]}" &
+    (
+      while true; do
+        # Atomically pop the first line from the shared queue.
+        exec 9>"$queue_lock"
+        flock -x 9
+        job=$(head -n 1 "$queue_file" 2>/dev/null)
+        if [ -n "$job" ]; then
+          sed -i '1d' "$queue_file"
+        fi
+        exec 9>&-
+        [ -z "$job" ] && break
+        run_worker "$worker_id" "$job"
+      done
+    ) &
   done
   wait
+  rm -f "$queue_file" "$queue_lock"
   echo "=== Fold $fold complete ==="
 done
 
