@@ -39,6 +39,9 @@ FOLDS=""
 MODEL_FILTER=""
 MAX_EPOCHS=""
 EARLY_STOPPING_PATIENCE=""
+# Lower default than the framework's 400 to avoid OOMs during the test phase
+# of larger architectures (latent_additive in particular). Override with --eval-chunk-size.
+EVAL_CHUNK_SIZE="100"
 
 while [ $# -gt 0 ]; do
   arg="$1"
@@ -59,6 +62,8 @@ while [ $# -gt 0 ]; do
     --max-epochs) MAX_EPOCHS="$2"; shift 2 ;;
     --max-epochs=*) MAX_EPOCHS="${arg#*=}"; shift ;;
     --early-stopping) EARLY_STOPPING_PATIENCE="$2"; shift 2 ;;
+    --eval-chunk-size) EVAL_CHUNK_SIZE="$2"; shift 2 ;;
+    --eval-chunk-size=*) EVAL_CHUNK_SIZE="${arg#*=}"; shift ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
@@ -103,6 +108,7 @@ fi
 # Always-on: save last.ckpt for resume (model_checkpoint config has no save_last
 # field by default, so we add it).
 TRAIN_OVERRIDES+=("+callbacks.model_checkpoint.save_last=true")
+TRAIN_OVERRIDES+=("data.evaluation.chunk_size=$EVAL_CHUNK_SIZE")
 if [ -n "$MAX_EPOCHS" ]; then
   TRAIN_OVERRIDES+=("trainer.max_epochs=$MAX_EPOCHS")
 fi
@@ -236,6 +242,9 @@ run_gpu() {
         ;;
     esac
 
+    # Disable set -e for the per-job command so a failure (OOM, transient bug)
+    # doesn't cascade-skip the rest of this GPU's queue.
+    set +e
     CUDA_VISIBLE_DEVICES=$gpu_id uv run train \
       experiment="$exp" \
       "hydra.run.dir=$out_dir" \
@@ -244,8 +253,14 @@ run_gpu() {
       "${TRAIN_OVERRIDES[@]}" \
       "${extra[@]}" \
       $ckpt_arg
+    local rc=$?
+    set -e
 
-    echo "[GPU $gpu_id] Finished $name fold$fold"
+    if [ $rc -ne 0 ]; then
+      echo "[GPU $gpu_id] Job FAILED (rc=$rc): $name fold$fold (continuing)"
+    else
+      echo "[GPU $gpu_id] Finished $name fold$fold"
+    fi
   done
 }
 
