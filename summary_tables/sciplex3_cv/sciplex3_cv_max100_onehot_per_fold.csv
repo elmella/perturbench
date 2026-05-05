@@ -189,3 +189,13 @@ results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,2,r2_score_scores,-
 results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,2,top_k_recall_scores,0.0,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold2/evaluation/summary.csv
 results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,2,mmd_pca,2.175,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold2/evaluation/summary.csv
 results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,2,mmd_rank_pca,0.3143,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold2/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,rmse_average,0.02467,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,rmse_rank_average,0.4863,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,cosine_pca_average,0.8712,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,cosine_rank_pca_average,0.3201,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,cosine_logfc,0.1924,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,cosine_rank_logfc,0.4769,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,r2_score_scores,-0.002255,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,top_k_recall_scores,0.0001515,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,mmd_pca,2.193,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv
+results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,mmd_rank_pca,0.3291,CPA,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv

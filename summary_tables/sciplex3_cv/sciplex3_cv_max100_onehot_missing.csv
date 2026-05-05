@@ -1,2 +1,1 @@
-input_folder,embedding,model,experiment,fold,status,summary_path,checkpoint_path,note
-results/sciplex3_cv/max100,onehot,cpa_noadv,cpa_noadv_onehot,3,directory_only,results/sciplex3_cv/max100/cpa_noadv_onehot/fold3/evaluation/summary.csv,,
+
